@@ -86,7 +86,7 @@ class CharacterCollection:
 
     def _test_commands(self) -> None:
         try:
-            subprocess.run(['magick', '--help'], stdout=subprocess.DEVNULL).check_returncode()
+            subprocess.run(['magick', '-version'], stdout=subprocess.DEVNULL).check_returncode()
         except FileNotFoundError as e:
             raise FileNotFoundError('imagemagick is required to merge alpha layers', e)
 

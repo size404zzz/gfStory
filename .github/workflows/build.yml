@@ -44,7 +44,7 @@ jobs:
           EOF
             sudo chmod +x /usr/local/bin/magick
           fi
-          magick --version
+          magick -version
           wget https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-linux-cli.tar.gz
           tar -zxf vgmstream-linux-cli.tar.gz
           mkdir bin
@@ -53,7 +53,7 @@ jobs:
           echo "${PWD}/bin" >> $GITHUB_PATH
       - name: Restore Cached Resources
         id: restore-gf-downloader-resources
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             unpack/downloader/output
@@ -78,14 +78,14 @@ jobs:
           python downloader.py --downloadres 0 --abname
       - name: Cache Downloaded Resources
         if: steps.restore-gf-downloader-resources.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             unpack/downloader/output
           key: ${{ steps.restore-gf-downloader-resources.outputs.cache-primary-key }}
       - name: Restore Cached Resources (images)
         id: restore-image-resources
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             unpack/images
@@ -98,14 +98,14 @@ jobs:
           python tests/test_characters.py
       - name: Cache Resources (images)
         if: steps.restore-image-resources.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             unpack/images
           key: ${{ steps.restore-image-resources.outputs.cache-primary-key }}
       - name: Restore Cached Resources (audio)
         id: restore-audio-resources
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             unpack/audio
@@ -117,7 +117,7 @@ jobs:
           python tests/test_audio.py
       - name: Cache Resources (audio)
         if: steps.restore-audio-resources.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             unpack/audio
