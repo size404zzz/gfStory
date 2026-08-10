@@ -164,9 +164,9 @@ jobs:
           test -d dist/audio
           test -d dist/images
           test -d dist/stories
-      - name: Publish to Cloudflare Pages
+      - name: Publish to Cloudflare Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=gfstory
+          command: deploy

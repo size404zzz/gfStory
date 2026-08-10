@@ -1,6 +1,6 @@
-# gfStory 解包与 Cloudflare Pages 发布
+# gfStory 解包与 Cloudflare Workers 发布
 
-本项目不会把游戏资源直接提交到 Git。资源体积很大，而且资源来自独立的数据仓库，因此发布工作由 GitHub Actions 在 Ubuntu Runner 上完成：下载资源、解包、生成索引、构建 Vite 网站，最后使用 Wrangler 上传到 Cloudflare Pages。
+本项目不会把游戏资源直接提交到 Git。资源体积很大，而且资源来自独立的数据仓库，因此发布工作由 GitHub Actions 在 Ubuntu Runner 上完成：下载资源、解包、生成索引、构建 Vite 网站，最后使用 Wrangler 上传到 Cloudflare Worker 的 Static Assets。
 
 ## 一次性准备
 
@@ -13,24 +13,26 @@ Fork [gudzpoz/gfStory](https://github.com/gudzpoz/gfStory)，把本仓库的默�
 
 GitHub Actions 会使用递归子模块检出，因此不需要把这些大文件复制到自己的仓库。
 
-### 2. 创建 Cloudflare Pages 项目
+### 2. 创建 Cloudflare Worker 项目
 
-在 Cloudflare 控制台创建一个 Pages 项目，项目名使用 `gfstory`。选择 Direct Upload 即可，代码发布由 GitHub Actions 负责。
+在 Cloudflare 控制台的 Workers & Pages 中创建一个 Worker，项目名使用 `gfstory`。选择上传静态文件或 Hello World 都可以，初始内容会被 GitHub Actions 的正式构建覆盖。
 
-也可以在本机登录 Wrangler 后创建：
+也可以在本机登录 Wrangler 后手动发布已经生成的 `dist`：
 
 ```text
 npx wrangler login
-npx wrangler pages project create gfstory
+npx wrangler deploy
 ```
 
-如果项目名不是 `gfstory`，需要同步修改 `.github/workflows/build.yml` 最后一行的 `--project-name`。
+如果项目名不是 `gfstory`，需要同步修改 `wrangler.toml` 中的 `name`。
+
+如果该 Worker 已经连接了 Cloudflare 的 Git 自动构建，请关闭或断开这条自动构建。它只会执行 `npx wrangler deploy`，不会运行本项目所需的资源解包流程；正式发布由本仓库的 GitHub Actions 完成。
 
 ### 3. 创建 Cloudflare API Token
 
 在 Cloudflare 创建一个只用于部署的 API Token：
 
-- 权限：Account / Cloudflare Pages / Edit
+- 权限：Account / Workers Scripts / Edit
 - Account Resources：只选择实际部署的账号
 - 不要把 Token 写进代码或提交到 Git
 
@@ -58,17 +60,17 @@ npx wrangler pages project create gfstory
 5. 生成 `src/assets/*.json` 资源索引。
 6. 生成 Pagefind 搜索索引并执行 Vite 构建。
 7. 检查 `dist` 中的入口页面和资源目录。
-8. 使用 Wrangler 发布到 Cloudflare Pages 项目 `gfstory`。
+8. 使用 Wrangler 发布到 Cloudflare Worker `gfstory`。
 
 第一次运行可能较慢，因为需要下载完整资源并建立 GitHub Actions 缓存。后续运行会复用缓存；资源索引或解包代码变化时，缓存键会自动变化，避免使用旧资源。
 
 ## 验收清单
 
-部署成功后打开：
+部署成功后打开 Worker 地址：
 
-- `https://gfstory.pages.dev/`：编辑器
-- `https://gfstory.pages.dev/simulator.html`：剧情模拟器
-- `https://gfstory.pages.dev/viewer.html`：单文件阅读器入口
+- `https://gfstory.<你的账号子域>.workers.dev/`：编辑器
+- `https://gfstory.<你的账号子域>.workers.dev/simulator.html`：剧情模拟器
+- `https://gfstory.<你的账号子域>.workers.dev/viewer.html`：单文件阅读器入口
 
 编辑器验收：
 
@@ -78,7 +80,7 @@ npx wrangler pages project create gfstory
 4. 选择替换或追加，确认原有场景 UI 样式和节点编辑行为没有改变。
 5. 导出并在模拟器中打开，确认背景、立绘、BGM 和选项仍能正常工作。
 
-发布日志中至少应看到 `Validate generated resources`、`Validate site output` 和 `Publish to Cloudflare Pages` 三步成功。
+发布日志中至少应看到 `Validate generated resources`、`Validate site output` 和 `Publish to Cloudflare Worker` 三步成功。
 
 ## 本机开发说明
 
@@ -92,6 +94,6 @@ pnpm exec vitest run test/script-parser.test.ts
 
 ## 大资源的托管方式
 
-资源最终会被复制到 Vite 的 `dist/audio`、`dist/images` 和 `dist/stories`，由 Cloudflare Pages 作为静态文件托管并通过 Cloudflare CDN 分发。GitHub 仓库只保存解包程序和索引，不保存这些生成物。
+资源最终会被复制到 Vite 的 `dist/audio`、`dist/images` 和 `dist/stories`，由 Cloudflare Worker Static Assets 作为静态文件托管并通过 Cloudflare CDN 分发。GitHub 仓库只保存解包程序和索引，不保存这些生成物。
 
-如果将来出现单个文件超过 Cloudflare Pages 的文件大小限制，或需要独立更新资源而不重新构建网站，再把对应资源迁移到 Cloudflare R2，并在应用中改为读取 R2 的公开 URL；当前原项目的发布链路没有使用 R2。
+如果将来出现单个文件超过 Cloudflare Worker Static Assets 的文件大小限制，或需要独立更新资源而不重新构建网站，再把对应资源迁移到 Cloudflare R2，并在应用中改为读取 R2 的公开 URL；当前原项目的发布链路没有使用 R2。
