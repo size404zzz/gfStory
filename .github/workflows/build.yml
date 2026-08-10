@@ -17,7 +17,7 @@ jobs:
   documentation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: 'recursive'
       - name: Log Disk Space
@@ -28,11 +28,23 @@ jobs:
           tool-cache: false
           large-packages: false
           swap-storage: false
-      - uses: mfinelli/setup-imagemagick@v7
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg pngquant zip
+          sudo apt-get install -y ffmpeg imagemagick pngquant zip
+          if ! command -v magick >/dev/null 2>&1; then
+            sudo tee /usr/local/bin/magick >/dev/null <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          if [[ "${1:-}" == "identify" ]]; then
+            shift
+            exec identify "$@"
+          fi
+          exec convert "$@"
+          EOF
+            sudo chmod +x /usr/local/bin/magick
+          fi
+          magick --version
           wget https://github.com/vgmstream/vgmstream-releases/releases/download/nightly/vgmstream-linux-cli.tar.gz
           tar -zxf vgmstream-linux-cli.tar.gz
           mkdir bin
@@ -145,7 +157,7 @@ jobs:
           version: 9.4.0
           run_install: false
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
       - name: Setup PNPM Workspace
