@@ -16,6 +16,7 @@ import {
 } from 'vue';
 
 import CharacterList from '../character/CharacterList.vue';
+import ScriptImportModal from './ScriptImportModal.vue';
 import StoryLineView from './StoryLineView.vue';
 import StoryList from '../simulator/StoryList.vue';
 import {
@@ -51,11 +52,53 @@ const emit = defineEmits<{
 }>();
 
 const shouldShowCharacterList = ref(false);
+const shouldShowScriptImport = ref(false);
+const names = ref<Array<string>>([]);
+
 function showCharacterList() {
   shouldShowCharacterList.value = true;
 }
 
-const names = ref<Array<string>>([]);
+function mergeImportedCharacters(imported: GfStory['characters']) {
+  imported.forEach((character) => {
+    const existing = characters.value.find((item) => item.name === character.name);
+    if (!existing) {
+      characters.value.push({
+        ...character,
+        id: '',
+        sprites: character.sprites.map((sprite) => ({ ...sprite, id: '' })),
+      });
+      return;
+    }
+    character.sprites.forEach((sprite) => {
+      if (!existing.sprites.some((item) => item.name === sprite.name)) {
+        existing.sprites.push({ ...sprite, id: '' });
+      }
+    });
+  });
+}
+
+function applyScriptImport(story: GfStory, mode: 'replace' | 'append') {
+  if (mode === 'replace') {
+    characters.value.splice(0, characters.value.length, ...story.characters.map((character) => ({
+      ...character,
+      id: '',
+      sprites: character.sprites.map((sprite) => ({ ...sprite, id: '' })),
+    })));
+    lines.value.splice(0, lines.value.length, ...story.lines.map((line) => ({
+      ...line,
+      id: nextId(),
+    })));
+  } else {
+    mergeImportedCharacters(story.characters);
+    lines.value.push(...story.lines.map((line) => ({
+      ...line,
+      id: nextId(),
+    })));
+  }
+  names.value = [];
+  emit('update:modelValue', props.modelValue);
+}
 
 function findIndexByCurrentName() {
   if (names.value.length === 0) {
@@ -274,6 +317,9 @@ function doIo(v: string) {
 </script>
 
 <template>
+  <script-import-modal v-model:show="shouldShowScriptImport"
+    @apply="applyScriptImport"
+  ></script-import-modal>
   <character-list v-model:show="shouldShowCharacterList" :modelValue="characters"
     @update:modelValue="(v) => characters = v"
   >
@@ -289,6 +335,9 @@ function doIo(v: string) {
         </n-button>
         <n-button @click="appendDefaultLine" type="primary">
           <n-icon><add-filled></add-filled></n-icon>添加节点
+        </n-button>
+        <n-button @click="shouldShowScriptImport = true" type="info">
+          <n-icon><upload-filled></upload-filled></n-icon>自动解析剧本
         </n-button>
         <n-button @click="copyCurrent" type="warning" :disabled="!canMove(-1)"
           title="复制节点"
