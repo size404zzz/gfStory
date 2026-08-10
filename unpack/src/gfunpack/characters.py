@@ -158,17 +158,18 @@ class CharacterCollection:
     def _merge_files(cls, sprite_path: pathlib.Path, alpha_path: pathlib.Path,
                      alpha_dims_path: pathlib.Path, image_path: pathlib.Path):
         # resize to the same dimensions
+        dims = subprocess.check_output([
+            'magick',
+            'identify',
+            '-format',
+            '%wx%h',
+            sprite_path,
+        ], text=True).strip()
         subprocess.run([
             'magick',
-            sprite_path,
-            '-set',
-            'option:dims',
-            '%wx%h',
             alpha_path,
-            '-delete',
-            '0',
             '-resize',
-            '%[dims]',
+            f'{dims}!',
             alpha_dims_path,
         ]).check_returncode()
         # copy the alpha channel
