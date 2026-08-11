@@ -67,6 +67,7 @@ jobs:
           cd unpack
           uv sync
       - name: Download Resources
+        if: steps.restore-gf-downloader-resources.outputs.cache-hit != 'true'
         run: |
           cd unpack
           source .venv/bin/activate
@@ -91,6 +92,7 @@ jobs:
             unpack/images
           key: gf-image-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_backgrounds.py', 'unpack/tests/test_characters.py', 'unpack/gf-data-ch/resdata_no_hash.json') }}
       - name: Unpack images
+        if: steps.restore-image-resources.outputs.cache-hit != 'true'
         run: |
           cd unpack
           source .venv/bin/activate
@@ -110,7 +112,15 @@ jobs:
           path: |
             unpack/audio
           key: gf-audio-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_audio.py', 'unpack/gf-data-ch/resdata_no_hash.json') }}
+      - name: Restore Cached Resources (stories)
+        id: restore-story-resources
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            unpack/stories
+          key: gf-story-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_stories.py', 'unpack/gf-data-ch/resdata_no_hash.json', 'unpack/downloader.patch') }}
       - name: Unpack audio
+        if: steps.restore-audio-resources.outputs.cache-hit != 'true'
         run: |
           cd unpack
           source .venv/bin/activate
@@ -122,11 +132,19 @@ jobs:
           path: |
             unpack/audio
           key: ${{ steps.restore-audio-resources.outputs.cache-primary-key }}
-      - name: Unpack resources
+      - name: Generate stories
+        if: steps.restore-story-resources.outputs.cache-hit != 'true'
         run: |
           cd unpack
           source .venv/bin/activate
-          python -m gfunpack downloader/output -o .
+          python tests/test_stories.py
+      - name: Cache Resources (stories)
+        if: steps.restore-story-resources.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            unpack/stories
+          key: ${{ steps.restore-story-resources.outputs.cache-primary-key }}
       - name: Log Disk Space
         run: df -h
       - name: Move Resources
