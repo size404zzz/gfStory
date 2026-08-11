@@ -1,26 +1,26 @@
 <script setup lang="ts">
 import {
-  NButton, NButtonGroup, NCard, NCollapse,
-  NCollapseItem, NIcon, NModal, NMenu,
-  NPerformantEllipsis,
-  NSpace, NTag, NUpload, useDialog,
+  NButton, NButtonGroup, NCard, NCheckbox, NEmpty,
+  NForm, NFormItem, NIcon, NInput, NMenu, NModal,
+  NRadioButton, NRadioGroup, NSelect, NSpace, NTag,
+  NUpload, useDialog,
   type MenuOption, type UploadCustomRequestOptions,
 } from 'naive-ui';
 import {
   AddFilled, ContentPasteFilled, DeleteFilled, DownloadFilled,
-  HelpCenterFilled, MoveDownFilled, MoveUpFilled, PeopleFilled,
+  HelpCenterFilled, MoveDownFilled, MoveUpFilled,
   RefreshFilled, UploadFilled,
 } from '@vicons/material';
 import {
-  computed, h, provide, ref,
+  computed, h, provide, ref, watch,
 } from 'vue';
 
-import CharacterList from '../character/CharacterList.vue';
 import ScriptImportModal from './ScriptImportModal.vue';
 import StoryLineView from './StoryLineView.vue';
 import StoryList from '../simulator/StoryList.vue';
 import {
-  defaultLine, nextId, type GfStory, type TextLine,
+  defaultLine, nextId, type GfStory, type Line, type OptionLine,
+  type SceneLine, type TextLine,
 } from '../../types/lines';
 import { labelCharactersWithIds, type Character } from '../../types/character';
 import { importMarkdownString } from '../../story/compiler';
@@ -33,30 +33,228 @@ const characters = ref(props.modelValue.characters);
 const lines = ref(props.modelValue.lines);
 
 provide('characters', computed(() => labelCharactersWithIds(characters.value)));
+provide('characterStore', characters);
 provide('narrators', computed(() => {
-  const narrators = lines.value
+  const narrators = characters.value.map((character) => character.name).concat(lines.value
     .filter((line) => line.type === 'text' && line.narrator !== '')
-    .map((line) => (line as TextLine).narrator);
+    .map((line) => (line as TextLine).narrator));
   return ['', ...new Set(narrators)]
-    .map((narrator) => ({
-      label: narrator,
-      value: narrator,
-    }));
+    .map((narrator) => ({ label: narrator, value: narrator }));
 }));
 
-// eslint-disable-next-line no-spaced-func
 const emit = defineEmits<{
   'update:modelValue': [value: GfStory],
   'export': [type: 'json' | 'markdown' | 'zip'],
   'import': [type: 'json' | 'markdown'],
 }>();
 
-const shouldShowCharacterList = ref(false);
-const shouldShowScriptImport = ref(false);
-const names = ref<Array<string>>([]);
+type LineFilter = 'all' | Line['type'];
+type NewLineType = Line['type'];
+type BatchScope = 'selection' | 'visible';
 
-function showCharacterList() {
-  shouldShowCharacterList.value = true;
+const shouldShowScriptImport = ref(false);
+const showStorySelect = ref(false);
+const showBatchEditor = ref(false);
+const query = ref('');
+const typeFilter = ref<LineFilter>('all');
+const activeId = ref(lines.value[0]?.id ?? '');
+const selectedIds = ref<string[]>(activeId.value ? [activeId.value] : []);
+const batchScope = ref<BatchScope>('selection');
+const batchFind = ref('');
+const batchReplace = ref('');
+const batchNarrator = ref<string | null>(null);
+const shouldChangeNarrator = ref(false);
+
+const narratorOptions = computed(() => {
+  const names = new Set<string>();
+  characters.value.forEach((character) => names.add(character.name));
+  lines.value.forEach((line) => {
+    if (line.type === 'text' && line.narrator) names.add(line.narrator);
+  });
+  return [...names].map((name) => ({ label: name, value: name }));
+});
+
+function pruneHtml(html: string) {
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  return container.innerText.replace(/\s+/g, ' ').trim();
+}
+
+function sceneLabel(line: SceneLine) {
+  if (line.scene === 'background') return '背景';
+  if (line.scene === 'audio') return 'BGM';
+  return '音效';
+}
+
+function lineLabel(line: Line) {
+  if (line.type === 'text') return line.narrator || '旁白';
+  if (line.type === 'scene') return sceneLabel(line);
+  return '选项';
+}
+
+function linePreview(line: Line) {
+  if (line.type === 'text') return pruneHtml(line.text) || '空白对白';
+  if (line.type === 'scene') return line.media || '未选择资源';
+  return line.options.map((option) => option.key).filter(Boolean).join(' / ') || '未填写选项';
+}
+
+const filteredLines = computed(() => {
+  const normalizedQuery = query.value.trim().toLocaleLowerCase();
+  return lines.value.map((line, index) => ({ line, index })).filter(({ line }) => {
+    if (typeFilter.value !== 'all' && line.type !== typeFilter.value) return false;
+    if (!normalizedQuery) return true;
+    return `${lineLabel(line)} ${linePreview(line)}`.toLocaleLowerCase().includes(normalizedQuery);
+  });
+});
+
+watch(filteredLines, (items) => {
+  if (items.length === 0 || items.some(({ line }) => line.id === activeId.value)) return;
+  activeId.value = items[0].line.id;
+  if (selectedIds.value.length === 0) selectedIds.value = [activeId.value];
+});
+
+const activeLine = computed(() => lines.value.find((line) => line.id === activeId.value));
+const activeIndex = computed(() => lines.value.findIndex((line) => line.id === activeId.value));
+const selectedCount = computed(() => selectedIds.value.length);
+const selectedLineIds = computed(() => new Set(selectedIds.value));
+const batchTargetIds = computed(() => {
+  if (batchScope.value === 'selection' && selectedIds.value.length > 0) {
+    return new Set(selectedIds.value);
+  }
+  return new Set(filteredLines.value.map(({ line }) => line.id));
+});
+const batchTextCount = computed(() => lines.value.filter((line) => (
+  line.type === 'text' && batchTargetIds.value.has(line.id)
+)).length);
+const canApplyBatch = computed(() => (
+  batchTextCount.value > 0
+  && (batchFind.value !== '' || (shouldChangeNarrator.value && batchNarrator.value !== null))
+));
+
+function setActive(id: string, keepSelection = false) {
+  activeId.value = id;
+  if (!keepSelection) selectedIds.value = id ? [id] : [];
+}
+
+function selectLine(id: string) {
+  setActive(id);
+}
+
+function toggleSelected(id: string, checked: boolean) {
+  if (checked) {
+    if (!selectedIds.value.includes(id)) selectedIds.value.push(id);
+    if (!activeId.value) activeId.value = id;
+    return;
+  }
+  selectedIds.value = selectedIds.value.filter((item) => item !== id);
+  if (activeId.value === id) activeId.value = selectedIds.value[0] ?? '';
+}
+
+function resetSelection(preferredId = lines.value[0]?.id ?? '') {
+  setActive(preferredId);
+}
+
+function insertLine(line: Line) {
+  const insertionIndex = activeIndex.value === -1 ? lines.value.length : activeIndex.value + 1;
+  lines.value.splice(insertionIndex, 0, line);
+  resetSelection(line.id);
+}
+
+function createTextLine() {
+  const line = defaultLine();
+  for (let i = lines.value.length - 1; i >= 0; i -= 1) {
+    const previous = lines.value[i];
+    if (previous.type === 'text') {
+      line.sprites = [...previous.sprites];
+      break;
+    }
+  }
+  return line;
+}
+
+function createSceneLine(): SceneLine {
+  return {
+    type: 'scene',
+    id: nextId(),
+    scene: 'background',
+    media: '',
+    style: 'cover',
+    classes: [],
+  };
+}
+
+function createOptionLine(): OptionLine {
+  return {
+    type: 'option',
+    id: nextId(),
+    options: [
+      { key: '选项 1', value: '1' },
+      { key: '选项 2', value: '2' },
+    ],
+  };
+}
+
+function addLine(type: NewLineType) {
+  if (type === 'text') insertLine(createTextLine());
+  if (type === 'scene') insertLine(createSceneLine());
+  if (type === 'option') insertLine(createOptionLine());
+}
+
+function duplicateSelected() {
+  const ids = selectedIds.value.length > 0 ? selectedLineIds.value : new Set([activeId.value]);
+  const copies: string[] = [];
+  for (let index = lines.value.length - 1; index >= 0; index -= 1) {
+    const line = lines.value[index];
+    if (ids.has(line.id)) {
+      const copy = JSON.parse(JSON.stringify(line)) as Line;
+      copy.id = nextId();
+      lines.value.splice(index + 1, 0, copy);
+      copies.unshift(copy.id);
+    }
+  }
+  if (copies.length > 0) {
+    activeId.value = copies[0];
+    selectedIds.value = copies;
+  }
+}
+
+function removeSelected() {
+  const ids = selectedIds.value.length > 0 ? selectedLineIds.value : new Set([activeId.value]);
+  const fallbackIndex = activeIndex.value;
+  lines.value.splice(0, lines.value.length, ...lines.value.filter((line) => !ids.has(line.id)));
+  resetSelection(lines.value[Math.min(Math.max(fallbackIndex, 0), lines.value.length - 1)]?.id ?? '');
+}
+
+function moveActive(offset: -1 | 1) {
+  const index = activeIndex.value;
+  const targetIndex = index + offset;
+  if (index < 0 || targetIndex < 0 || targetIndex >= lines.value.length) return;
+  const current = lines.value[index];
+  lines.value[index] = lines.value[targetIndex];
+  lines.value[targetIndex] = current;
+}
+
+function openBatchEditor() {
+  batchScope.value = selectedIds.value.length > 0 ? 'selection' : 'visible';
+  batchFind.value = '';
+  batchReplace.value = '';
+  batchNarrator.value = null;
+  shouldChangeNarrator.value = false;
+  showBatchEditor.value = true;
+}
+
+function applyBatchChanges() {
+  if (!canApplyBatch.value) return;
+  lines.value.forEach((line) => {
+    if (line.type !== 'text' || !batchTargetIds.value.has(line.id)) return;
+    if (batchFind.value !== '') {
+      line.text = line.text.split(batchFind.value).join(batchReplace.value);
+    }
+    if (shouldChangeNarrator.value && batchNarrator.value !== null) {
+      line.narrator = batchNarrator.value;
+    }
+  });
+  showBatchEditor.value = false;
 }
 
 function mergeImportedCharacters(imported: GfStory['characters']) {
@@ -85,173 +283,69 @@ function applyScriptImport(story: GfStory, mode: 'replace' | 'append') {
       id: '',
       sprites: character.sprites.map((sprite) => ({ ...sprite, id: '' })),
     })));
-    lines.value.splice(0, lines.value.length, ...story.lines.map((line) => ({
-      ...line,
-      id: nextId(),
-    })));
+    lines.value.splice(0, lines.value.length, ...story.lines.map((line) => ({ ...line, id: nextId() })));
   } else {
     mergeImportedCharacters(story.characters);
-    lines.value.push(...story.lines.map((line) => ({
-      ...line,
-      id: nextId(),
-    })));
+    lines.value.push(...story.lines.map((line) => ({ ...line, id: nextId() })));
   }
-  names.value = [];
+  resetSelection(lines.value[0]?.id ?? '');
   emit('update:modelValue', props.modelValue);
-}
-
-function findIndexByCurrentName() {
-  if (names.value.length === 0) {
-    return -1;
-  }
-  const id = names.value[0];
-  return lines.value.findIndex((line) => line.id === id);
-}
-
-function removeLine() {
-  const i = findIndexByCurrentName();
-  if (i !== -1) {
-    lines.value.splice(i, 1);
-  }
-}
-
-function moveUp() {
-  const i = findIndexByCurrentName();
-  if (i > 0) {
-    const upper = lines.value[i - 1];
-    lines.value[i - 1] = lines.value[i];
-    lines.value[i] = upper;
-  }
-}
-
-function moveDown() {
-  const i = findIndexByCurrentName();
-  if (i !== -1 && i + 1 < lines.value.length) {
-    const lower = lines.value[i + 1];
-    lines.value[i + 1] = lines.value[i];
-    lines.value[i] = lower;
-  }
-}
-
-function appendDefaultLine() {
-  const line = defaultLine();
-  const ls = lines.value;
-  for (let i = ls.length - 1; i >= 0; i -= 1) {
-    const last = ls[i];
-    if (last.type === 'text') {
-      line.sprites = [...last.sprites];
-      break;
-    }
-  }
-  lines.value.push(line);
-  names.value = [line.id];
-}
-
-function copyCurrent() {
-  const i = findIndexByCurrentName();
-  if (i !== -1) {
-    const line = JSON.parse(JSON.stringify(lines.value[i]));
-    line.id = nextId();
-    lines.value.splice(i + 1, 0, line);
-    names.value = [line.id];
-  }
-}
-
-function pruneHtml(html: string) {
-  const container = document.createElement('div');
-  container.innerHTML = html;
-  return container.innerText;
-}
-
-function canMove(end: number) {
-  const i = findIndexByCurrentName();
-  return i !== -1 && i !== end;
 }
 
 const dialog = useDialog();
 function showHelpDialog() {
   dialog.info({
-    content: () => h('ol', {
-      title: '简单使用说明',
-      innerHTML: `
-        <li>使用“编辑角色”按钮来创建角色并添加立绘，需要先添加角色才能在对话中使用立绘。</li>
-        <li>使用“新增节点”按钮来创建剧情对话，也可以用节点来设置背景图片或是背景音乐。</li>
-        <li>使用“暂存并预览”按钮暂存故事，此时在右侧可以预览故事。</li>
-        <li>请务必在刷新页面或是退出浏览器之前使用“暂存并预览”按钮，否则改动将不会被保存。</li>
-        <li>使用“导出故事”按钮将故事导出为一个压缩包，解压后用浏览器打开里面的网页即可直接运行故事。</li>
-        <li>另外，导出的故事应该也可以直接上传到 Itch 上（一个独立游戏发布网站），但我还未测试。</li>
-        <li>另外再说一句，建议把 BGM 播放放在第一句文本之后，因为现在大多数浏览器会禁止一打开网页就播放音乐这种行为。</li>
-        <li>项目地址在 <a href="https://github.com/gudzpoz/gfStory">gfStory</a>，欢迎反馈！</li>
-      `,
-    }),
+    title: '编辑器说明',
+    content: '剧本大纲用于定位、筛选和批量管理节点；选择一个节点后，可在右侧修改详细内容。修改完成后使用“暂存并预览”刷新右侧模拟器。',
   });
 }
 
 async function importJson(options: UploadCustomRequestOptions) {
   const { file } = options.file;
-  if (!file) {
-    return;
-  }
+  if (!file) return;
   const story: GfStory = JSON.parse(await file.text());
-  if (!Array.isArray(story.characters) || !Array.isArray(story.lines)) {
-    return;
-  }
+  if (!Array.isArray(story.characters) || !Array.isArray(story.lines)) return;
   if (!story.characters.every((c) => c.id && c.name && Array.isArray(c.sprites)
-    && c.sprites.every((s) => s.id && s.name && s.url))) {
-    return;
-  }
-  if (!story.lines.every((l) => l.id && l.type)) {
-    return;
-  }
-  const s = props.modelValue;
-  s.characters.splice(0);
-  s.characters.push(...story.characters);
-  s.lines.splice(0);
-  s.lines.push(...story.lines);
-  emit('update:modelValue', props.modelValue);
+    && c.sprites.every((s) => s.id && s.name && s.url))) return;
+  if (!story.lines.every((line) => line.id && line.type)) return;
+  const current = props.modelValue;
+  current.characters.splice(0, current.characters.length, ...story.characters);
+  current.lines.splice(0, current.lines.length, ...story.lines);
+  resetSelection(current.lines[0]?.id ?? '');
+  emit('update:modelValue', current);
 }
+
 async function importMarkdownFile(markdown: string) {
   const parsed = importMarkdownString(markdown);
-  if (!parsed) {
-    return;
-  }
-  const s = props.modelValue;
+  if (!parsed) return;
   const mapping = await db.importResources(parsed.resources);
-  parsed.lines.forEach((l) => {
-    // eslint-disable-next-line no-param-reassign
-    l.id = nextId();
-    if (l.type === 'scene') {
-      if (mapping[l.media]) {
-        // eslint-disable-next-line no-param-reassign
-        l.media = mapping[l.media];
-      }
-    }
+  parsed.lines.forEach((line) => {
+    line.id = nextId();
+    if (line.type === 'scene' && mapping[line.media]) line.media = mapping[line.media];
   });
-  (parsed.characters as Character[]).forEach((c) => {
-    // eslint-disable-next-line no-param-reassign
-    c.imported = true;
+  (parsed.characters as Character[]).forEach((character) => {
+    character.imported = true;
   });
-  s.lines.splice(0);
-  s.lines.push(...parsed.lines);
-  s.characters.splice(0);
-  s.characters.push(...labelCharactersWithIds(parsed.characters as Character[]));
-  emit('update:modelValue', props.modelValue);
-  lines.value = [];
-  lines.value = props.modelValue.lines;
+  const current = props.modelValue;
+  current.lines.splice(0, current.lines.length, ...parsed.lines);
+  current.characters.splice(0, current.characters.length, ...labelCharactersWithIds(parsed.characters as Character[]));
+  lines.value = current.lines;
+  resetSelection(current.lines[0]?.id ?? '');
+  emit('update:modelValue', current);
 }
+
 async function importMarkdown(options: UploadCustomRequestOptions) {
   const { file } = options.file;
-  if (!file) {
-    return;
-  }
+  if (!file) return;
   await importMarkdownFile(await file.text());
 }
-const showStorySelect = ref(false);
+
 async function importStory(file: string) {
   showStorySelect.value = false;
   const [, path] = file.split('|');
   await importMarkdownFile(await fetch(`/stories/${path}`).then((res) => res.text()));
 }
+
 const ioOptions: MenuOption[] = [
   {
     title: '导出',
@@ -280,34 +374,35 @@ const ioOptions: MenuOption[] = [
         title: () => h(NUpload, {
           customRequest: importMarkdown,
           accept: 'text/plain',
-        }, { default: () => '尝试导入 Markdown（更加实验性）' }),
+        }, { default: () => '尝试导入 Markdown（实验性）' }),
         key: 'import-markdown',
       },
       {
-        title: '尝试导入剧情模拟器 Markdown（更加实验性）',
+        title: '尝试导入剧情模拟器 Markdown（实验性）',
         key: 'import-simulator',
       },
     ],
   },
 ];
-function doIo(v: string) {
-  switch (v) {
+
+function doIo(value: string) {
+  switch (value) {
     case 'json':
     case 'markdown':
     case 'zip':
       emit('update:modelValue', props.modelValue);
-      emit('export', v);
+      emit('export', value);
       break;
     case 'import-simulator':
       showStorySelect.value = true;
       break;
     case 'reset': {
-      const s = props.modelValue;
-      s.characters.splice(0);
-      s.lines.splice(0);
-      lines.value = [];
-      lines.value = s.lines;
-      emit('update:modelValue', props.modelValue);
+      const current = props.modelValue;
+      current.characters.splice(0);
+      current.lines.splice(0);
+      lines.value = current.lines;
+      resetSelection('');
+      emit('update:modelValue', current);
       break;
     }
     default:
@@ -317,120 +412,343 @@ function doIo(v: string) {
 </script>
 
 <template>
-  <script-import-modal v-model:show="shouldShowScriptImport"
-    @apply="applyScriptImport"
-  ></script-import-modal>
-  <character-list v-model:show="shouldShowCharacterList" :modelValue="characters"
-    @update:modelValue="(v) => characters = v"
-  >
-  </character-list>
+  <script-import-modal v-model:show="shouldShowScriptImport" @apply="applyScriptImport" />
   <n-modal v-model:show="showStorySelect" preset="card">
-    <story-list value="" @update:value="importStory"></story-list>
+    <story-list value="" @update:value="importStory" />
   </n-modal>
-  <n-card class="list-operations">
-    <n-space :wrap="false" justify="start" style="width: fit-content;">
+  <n-modal v-model:show="showBatchEditor" preset="card" title="批量编辑对白" style="max-width: 620px">
+    <n-form label-placement="left" label-width="96">
+      <n-form-item label="应用范围">
+        <n-radio-group v-model:value="batchScope">
+          <n-radio-button value="selection" :disabled="selectedCount === 0">已选节点</n-radio-button>
+          <n-radio-button value="visible">当前筛选结果</n-radio-button>
+        </n-radio-group>
+      </n-form-item>
+      <n-form-item label="查找">
+        <n-input v-model:value="batchFind" placeholder="要替换的对白内容" />
+      </n-form-item>
+      <n-form-item label="替换为">
+        <n-input v-model:value="batchReplace" placeholder="留空即可删除查找到的内容" />
+      </n-form-item>
+      <n-form-item label="角色名">
+        <n-space vertical size="small" style="width: 100%">
+          <n-checkbox v-model:checked="shouldChangeNarrator">同时更改角色名</n-checkbox>
+          <n-select v-model:value="batchNarrator" :options="narratorOptions" filterable tag clearable
+            :disabled="!shouldChangeNarrator" placeholder="选择或输入角色名"
+          />
+        </n-space>
+      </n-form-item>
+    </n-form>
+    <template #action>
+      <n-space justify="space-between" align="center">
+        <n-tag>{{ batchTextCount }} 个对白节点</n-tag>
+        <n-space>
+          <n-button @click="showBatchEditor = false">取消</n-button>
+          <n-button type="primary" :disabled="!canApplyBatch" @click="applyBatchChanges">应用更改</n-button>
+        </n-space>
+      </n-space>
+    </template>
+  </n-modal>
+
+  <n-card class="editor-toolbar" size="small" :bordered="false">
+    <div class="toolbar-row">
       <n-button-group>
-        <n-button @click="showCharacterList" type="warning">
-          <n-icon><people-filled></people-filled></n-icon>编辑角色
+        <n-button type="primary" @click="addLine('text')">
+          <n-icon><add-filled /></n-icon>对白
         </n-button>
-        <n-button @click="appendDefaultLine" type="primary">
-          <n-icon><add-filled></add-filled></n-icon>添加节点
-        </n-button>
-        <n-button @click="shouldShowScriptImport = true" type="info">
-          <n-icon><upload-filled></upload-filled></n-icon>自动解析剧本
-        </n-button>
-        <n-button @click="copyCurrent" type="warning" :disabled="!canMove(-1)"
-          title="复制节点"
-        >
-          <n-icon><content-paste-filled></content-paste-filled></n-icon>
-        </n-button>
-        <n-button @click="removeLine" type="error" :disabled="!canMove(-1)"
-          title="移除当前"
-        >
-          <n-icon><delete-filled></delete-filled></n-icon>
-        </n-button>
-        <n-button @click="moveUp" secondary type="primary" :disabled="!canMove(0)"
-          title="上移"
-        >
-          <n-icon><move-up-filled></move-up-filled></n-icon>
-        </n-button>
-        <n-button @click="moveDown" secondary type="primary" :disabled="!canMove(lines.length - 1)"
-          title="下移"
-        >
-          <n-icon><move-down-filled></move-down-filled></n-icon>
-        </n-button>
-        <n-button @click="emit('update:modelValue', modelValue)" type="warning">
-          <n-icon><refresh-filled></refresh-filled></n-icon>暂存并预览
-        </n-button>
-        <n-button @click="showHelpDialog" type="info" title="帮助">
-          <n-icon><help-center-filled></help-center-filled></n-icon>
+        <n-button secondary type="primary" @click="addLine('scene')">场景</n-button>
+        <n-button secondary type="primary" @click="addLine('option')">选项</n-button>
+        <n-button type="info" @click="shouldShowScriptImport = true">
+          <n-icon><upload-filled /></n-icon>自动解析剧本
         </n-button>
       </n-button-group>
-      <n-menu @update:value="doIo" mode="horizontal" :options="ioOptions"></n-menu>
-    </n-space>
+      <n-space class="toolbar-actions" wrap>
+        <n-button quaternary :disabled="selectedCount === 0" title="复制选中节点" @click="duplicateSelected">
+          <n-icon><content-paste-filled /></n-icon>
+        </n-button>
+        <n-button quaternary type="error" :disabled="selectedCount === 0" title="删除选中节点" @click="removeSelected">
+          <n-icon><delete-filled /></n-icon>
+        </n-button>
+        <n-button quaternary :disabled="activeIndex <= 0" title="上移当前节点" @click="moveActive(-1)">
+          <n-icon><move-up-filled /></n-icon>
+        </n-button>
+        <n-button quaternary :disabled="activeIndex === -1 || activeIndex >= lines.length - 1" title="下移当前节点" @click="moveActive(1)">
+          <n-icon><move-down-filled /></n-icon>
+        </n-button>
+        <n-button secondary :disabled="lines.length === 0" @click="openBatchEditor">批量编辑</n-button>
+        <n-button type="warning" @click="emit('update:modelValue', modelValue)">
+          <n-icon><refresh-filled /></n-icon>暂存并预览
+        </n-button>
+        <n-button quaternary title="帮助" @click="showHelpDialog">
+          <n-icon><help-center-filled /></n-icon>
+        </n-button>
+      </n-space>
+    </div>
+    <div class="toolbar-meta">
+      <n-tag>{{ lines.length }} 个节点</n-tag>
+      <n-tag type="info">{{ lines.filter((line) => line.type === 'text').length }} 段对白</n-tag>
+      <n-tag type="success">{{ lines.filter((line) => line.type === 'scene').length }} 个场景</n-tag>
+      <n-tag type="warning">{{ lines.filter((line) => line.type === 'option').length }} 个选项</n-tag>
+      <n-menu class="io-menu" mode="horizontal" :options="ioOptions" @update:value="doIo" />
+    </div>
   </n-card>
-  <n-collapse display-directive="if" accordion v-model:expanded-names="names">
-    <n-collapse-item v-for="line in lines" :key="line.id" :name="line.id">
-      <story-line-view :modelValue="line"></story-line-view>
-      <template #header>
-        <div v-if="line.type === 'text'" class="line-header">
-          <n-tag v-if="line.narrator !== ''" type="info">{{ line.narrator }}</n-tag>
-          <n-performant-ellipsis class="text-preview">
-            {{ pruneHtml(line.text) }}
-          </n-performant-ellipsis>
+
+  <section class="story-workbench">
+    <aside class="story-outline" aria-label="剧情节点大纲">
+      <div class="outline-tools">
+        <n-input v-model:value="query" clearable placeholder="搜索对白、角色或资源" />
+        <n-button-group class="type-filter">
+          <n-button size="small" :type="typeFilter === 'all' ? 'primary' : 'default'" @click="typeFilter = 'all'">全部</n-button>
+          <n-button size="small" :type="typeFilter === 'text' ? 'primary' : 'default'" @click="typeFilter = 'text'">对白</n-button>
+          <n-button size="small" :type="typeFilter === 'scene' ? 'primary' : 'default'" @click="typeFilter = 'scene'">场景</n-button>
+          <n-button size="small" :type="typeFilter === 'option' ? 'primary' : 'default'" @click="typeFilter = 'option'">选项</n-button>
+        </n-button-group>
+      </div>
+      <div class="outline-count">显示 {{ filteredLines.length }} / {{ lines.length }} 个节点</div>
+      <div class="outline-list">
+        <div v-for="({ line, index }) in filteredLines" :key="line.id" class="outline-node"
+          :class="[`outline-node--${line.type}`, { 'is-active': line.id === activeId }]"
+        >
+          <n-checkbox class="node-checkbox" :checked="selectedLineIds.has(line.id)" :aria-label="`选择第 ${index + 1} 个节点`"
+            @click.stop @update:checked="(checked) => toggleSelected(line.id, checked)"
+          />
+          <button class="node-main" type="button" @click="selectLine(line.id)">
+            <span class="node-index">{{ String(index + 1).padStart(3, '0') }}</span>
+            <span class="node-copy">
+              <span class="node-kind">{{ lineLabel(line) }}</span>
+              <span class="node-preview">{{ linePreview(line) }}</span>
+            </span>
+          </button>
         </div>
-        <div v-else-if="line.type === 'scene'" class="line-header">
-          <n-tag type="success">{{ line.scene === 'background' ? '背景图' : '背景音乐' }}</n-tag>
-          <n-performant-ellipsis class="text-preview">
-            {{ line.media }}
-          </n-performant-ellipsis>
-        </div>
-        <div v-else class="line-header">
-          <n-tag type="warning">选项</n-tag>
-          <n-performant-ellipsis class="text-preview">
-            <n-tag v-for="o in line.options" :key="o.key">{{ o.key }}</n-tag>
-          </n-performant-ellipsis>
-        </div>
+        <n-empty v-if="filteredLines.length === 0" size="small" description="没有匹配的节点" />
+      </div>
+    </aside>
+
+    <main class="node-inspector">
+      <template v-if="activeLine">
+        <header class="inspector-header">
+          <div>
+            <span class="inspector-eyebrow">节点 {{ String(activeIndex + 1).padStart(3, '0') }}</span>
+            <h2>{{ lineLabel(activeLine) }}</h2>
+          </div>
+          <n-space>
+            <n-tag :type="activeLine.type === 'text' ? 'info' : activeLine.type === 'scene' ? 'success' : 'warning'">
+              {{ activeLine.type === 'text' ? '对白节点' : activeLine.type === 'scene' ? '场景节点' : '选项节点' }}
+            </n-tag>
+            <n-button quaternary title="复制当前节点" @click="duplicateSelected">
+              <n-icon><content-paste-filled /></n-icon>
+            </n-button>
+            <n-button quaternary type="error" title="删除当前节点" @click="removeSelected">
+              <n-icon><delete-filled /></n-icon>
+            </n-button>
+          </n-space>
+        </header>
+        <story-line-view :modelValue="activeLine" />
       </template>
-    </n-collapse-item>
-  </n-collapse>
+      <n-empty v-else description="从左侧选择节点，或创建一个新节点" />
+    </main>
+  </section>
 </template>
 
-<style>
-.n-collapse {
-  width: auto;
-}
-.n-collapse .n-collapse-item__header-main {
-  width: 100%;
-}
-.n-collapse .n-collapse-item__header-main .line-header {
-  width: calc(100% - 24px);
-  display: inline-flex;
-  flex-wrap: nowrap;
-}
-.n-collapse .n-collapse-item__header-main .line-header > .n-tag {
-  margin-right: 1em;
-}
-.n-collapse .n-collapse-item {
-  --n-title-padding: 0;
-  padding: 12px 12px 0 12px;
-  transition: background-color 0.3s;
-}
-.n-collapse-item--active {
-  border-radius: 12px;
-  background-color: black;
+<style scoped>
+.editor-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+  background: rgba(24, 24, 28, 0.96);
+  backdrop-filter: blur(12px);
 }
 
-.list-operations {
+.toolbar-row,
+.toolbar-meta,
+.outline-tools,
+.inspector-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toolbar-row {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.toolbar-row > .n-button-group,
+.toolbar-actions {
+  max-width: 100%;
+}
+
+.toolbar-row > .n-button-group {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.toolbar-actions {
+  justify-content: flex-end;
+}
+
+.toolbar-meta {
+  margin-top: 8px;
+  min-height: 28px;
+}
+
+.io-menu {
+  margin-left: auto;
+}
+
+.story-workbench {
+  display: grid;
+  grid-template-columns: minmax(250px, 34%) minmax(0, 1fr);
+  min-height: calc(100vh - 114px);
+}
+
+.story-outline {
+  min-width: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+  background: #1a1a1e;
+}
+
+.outline-tools {
   position: sticky;
-  overflow-x: auto;
-  top: 0;
-  z-index: 1;
+  top: 114px;
+  z-index: 2;
+  flex-wrap: wrap;
+  padding: 12px;
+  background: #1a1a1e;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
-.text-preview {
-  line-height: 2em;
+
+.outline-tools :deep(.n-input) {
+  flex: 1 1 100%;
 }
-.text-preview .n-tag:not(:first-child) {
-  margin-left: 0.5em;
+
+.type-filter {
+  display: flex;
+  width: 100%;
+}
+
+.type-filter :deep(.n-button) {
+  flex: 1;
+}
+
+.outline-count {
+  padding: 8px 12px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+}
+
+.outline-list {
+  padding: 0 8px 16px;
+}
+
+.outline-node {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 64px;
+  margin-bottom: 4px;
+  border-left: 3px solid #777;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.outline-node--text { border-left-color: #4f9cf9; }
+.outline-node--scene { border-left-color: #40b089; }
+.outline-node--option { border-left-color: #dba64a; }
+
+.outline-node.is-active {
+  background: rgba(255, 255, 255, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.node-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-main {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-width: 0;
+  padding: 10px 10px 10px 4px;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.node-main:hover { background: rgba(255, 255, 255, 0.045); }
+
+.node-index,
+.inspector-eyebrow {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.node-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.node-kind {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+}
+
+.node-preview {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.node-inspector {
+  min-width: 0;
+  padding: 20px 24px 36px;
+  background: #202024;
+}
+
+.inspector-header {
+  justify-content: space-between;
+  min-height: 52px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.inspector-header h2 {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+@media (max-width: 1100px) {
+  .toolbar-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .toolbar-row > :last-child {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 760px) {
+  .editor-toolbar { position: static; }
+  .toolbar-meta { flex-wrap: wrap; }
+  .io-menu { width: 100%; margin-left: 0; }
+  .story-workbench { grid-template-columns: 1fr; }
+  .story-outline { border-right: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.12); }
+  .outline-tools { position: static; }
+  .outline-list { max-height: 360px; overflow-y: auto; }
+  .node-inspector { padding: 16px 12px 28px; }
 }
 </style>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import {
-  NColorPicker, NForm, NFormItem, NFormItemRow, NSelect,
+  NColorPicker, NForm, NFormItem, NFormItemRow, NSelect, NSpace,
 } from 'naive-ui';
 import { inject, ref, type Ref } from 'vue';
 
 import CharacterListSelector from '../character/CharacterListSelector.vue';
+import InlineCharacterCreate from '../character/InlineCharacterCreate.vue';
 import ClassicEditor from './editor';
 import { type TextLine } from '../../types/lines';
 import type { Character } from '../../types/character';
@@ -13,6 +14,7 @@ const props = defineProps<{
   modelValue: TextLine,
 }>();
 const characters = inject<Ref<Character[]>>('characters')!;
+const characterStore = inject<Ref<Character[]>>('characterStore')!;
 const narrators = inject<Ref<{ value: string }[]>>('narrators')!;
 
 const color = ref(props.modelValue.narratorColor);
@@ -22,10 +24,16 @@ const color = ref(props.modelValue.narratorColor);
   <!-- eslint-disable vue/no-mutating-props -->
   <n-form inline :modelValue="modelValue" style="flex-wrap: wrap">
     <n-form-item-row label="立绘" path="tachie">
-      <character-list-selector :characters="characters" :modelValue="modelValue.sprites"
-        :remote="modelValue.remote"
-      >
-      </character-list-selector>
+      <n-space vertical>
+        <n-space align="center">
+          <character-list-selector :characters="characters" :modelValue="modelValue.sprites"
+            :remote="modelValue.remote"
+          />
+          <inline-character-create :characters="characterStore"
+            :modelValue="modelValue.sprites" :remote="modelValue.remote"
+          />
+        </n-space>
+      </n-space>
     </n-form-item-row>
     <n-form-item label="名称显示" path="narrator" class="narrator">
       <n-select
