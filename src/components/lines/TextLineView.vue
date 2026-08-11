@@ -6,6 +6,7 @@ import { inject, ref, type Ref } from 'vue';
 
 import CharacterListSelector from '../character/CharacterListSelector.vue';
 import InlineCharacterCreate from '../character/InlineCharacterCreate.vue';
+import InlineCharacterPreset from '../character/InlineCharacterPreset.vue';
 import ClassicEditor from './editor';
 import { type TextLine } from '../../types/lines';
 import type { Character } from '../../types/character';
@@ -28,6 +29,9 @@ const color = ref(props.modelValue.narratorColor);
         <n-space align="center">
           <character-list-selector :characters="characters" :modelValue="modelValue.sprites"
             :remote="modelValue.remote"
+          />
+          <inline-character-preset :characters="characterStore"
+            :modelValue="modelValue.sprites" :remote="modelValue.remote"
           />
           <inline-character-create :characters="characterStore"
             :modelValue="modelValue.sprites" :remote="modelValue.remote"
