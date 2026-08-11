@@ -118,7 +118,7 @@ jobs:
         with:
           path: |
             unpack/stories
-          key: gf-story-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_stories.py', 'unpack/gf-data-ch/resdata_no_hash.json', 'unpack/downloader.patch') }}
+          key: gf-story-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_audio.py', 'unpack/tests/test_characters.py', 'unpack/tests/test_stories.py', 'unpack/gf-data-ch/resdata_no_hash.json', 'unpack/downloader.patch') }}
       - name: Unpack audio
         if: steps.restore-audio-resources.outputs.cache-hit != 'true'
         run: |
