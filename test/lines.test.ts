@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import {
-  convertLineType, createLine, defaultLine,
+  convertLineType, createLine, defaultLine, initUniqueId, nextId,
 } from '../src/types/lines';
 
 describe('line factories', () => {
@@ -46,5 +46,13 @@ describe('line factories', () => {
     });
     expect(scene).not.toHaveProperty('text');
     expect(convertLineType(scene, 'scene')).toBe(scene);
+  });
+
+  test('resets generated ids for an empty new story', () => {
+    initUniqueId({ characters: [], lines: [createLine('text', '8')] });
+    expect(nextId()).toBe('9');
+
+    initUniqueId({ characters: [], lines: [] });
+    expect(nextId()).toBe('1');
   });
 });

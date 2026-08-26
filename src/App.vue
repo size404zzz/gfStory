@@ -1,118 +1,94 @@
 <script setup lang="ts">
 import { saveAs } from 'file-saver';
-import JSZip from 'jszip';
 import {
   darkTheme, zhCN,
-  NConfigProvider, NDialogProvider,
-  NLayout, NLayoutContent, NLayoutSider,
+  NButton, NConfigProvider, NDialogProvider,
   NNotificationProvider,
 } from 'naive-ui';
 import { ref } from 'vue';
 
-import LineList from './components/lines/LineList.vue';
-import StoryTeller from './components/viewer/StoryTeller.vue';
+import DialogueComposer from './components/editor/DialogueComposer.vue';
+import EditorStart from './components/editor/EditorStart.vue';
+import SceneSetup from './components/editor/SceneSetup.vue';
 import {
-  defaultLine, initUniqueId, type GfStory,
+  defaultLine, initUniqueId, nextId, type GfStory, type Line, type SceneLine,
 } from './types/lines';
-import { compileMarkdown, linesToMarkdown } from './story/compiler';
-import { db } from './db/media';
 
-const chunk = ref('');
+type EditorStep = 'start' | 'scene' | 'dialogue';
 
-function loadStorageOrDefault(): GfStory {
-  const saved = localStorage.getItem('story');
-  if (saved) {
-    const parsed = JSON.parse(saved);
-    if (!(parsed instanceof Array)) {
-      return parsed as GfStory;
-    }
+const step = ref<EditorStep>('start');
+const story = ref<GfStory | null>(null);
+const background = ref('');
+const music = ref('');
+
+function isScene(line: Line): line is SceneLine {
+  return line.type === 'scene';
+}
+
+function readSceneSettings(value: GfStory) {
+  const scenes = value.lines.filter(isScene);
+  background.value = scenes.find((line) => line.scene === 'background')?.media ?? '';
+  music.value = scenes.find((line) => line.scene === 'audio')?.media ?? '';
+}
+
+function startNewStory() {
+  story.value = { characters: [], lines: [] };
+  initUniqueId(story.value);
+  background.value = '';
+  music.value = '';
+  step.value = 'scene';
+}
+
+function importStory(value: GfStory) {
+  story.value = value;
+  initUniqueId(value);
+  readSceneSettings(value);
+  step.value = 'scene';
+}
+
+function updateStory(value: GfStory) {
+  story.value = value;
+}
+
+function finishSceneSetup() {
+  if (!story.value) return;
+  const scenes: SceneLine[] = [];
+  if (background.value) {
+    scenes.push({
+      type: 'scene',
+      id: nextId(),
+      scene: 'background',
+      media: background.value,
+      style: 'cover',
+      classes: [],
+    });
   }
-  return {
-    characters: [],
-    lines: [defaultLine()],
-  };
-}
-const story = loadStorageOrDefault();
-initUniqueId(story);
-
-async function updateStory(s: GfStory) {
-  // Keep the app-level story identity stable while replacing its committed data.
-  story.characters = s.characters;
-  story.lines = s.lines;
-  chunk.value = await compileMarkdown(await linesToMarkdown(story));
-  localStorage.setItem('story', JSON.stringify(story));
-}
-
-async function exportMarkdown() {
-  saveAs(new Blob([await linesToMarkdown(story, async (s) => {
-    if (s.includes(':')) {
-      return db.toDataUrl(s);
-    }
-    return new URL(s, document.baseURI).href;
-  })], {
-    type: 'text/markdown',
-  }), 'story.md');
+  if (music.value) {
+    scenes.push({
+      type: 'scene',
+      id: nextId(),
+      scene: 'audio',
+      media: music.value,
+      style: 'cover',
+      classes: [],
+    });
+  }
+  const content = story.value.lines.filter((line) => line.type !== 'scene');
+  if (!content.some((line) => line.type === 'text')) content.push(defaultLine());
+  story.value = { ...story.value, lines: [...scenes, ...content] };
+  step.value = 'dialogue';
 }
 
-async function exportJson() {
-  saveAs(new Blob([JSON.stringify(story)], {
+function saveJson() {
+  if (!story.value) return;
+  saveAs(new Blob([JSON.stringify(story.value)], {
     type: 'application/json',
   }), 'story.json');
 }
 
-async function exportStory(format: string) {
-  if (format === 'markdown') {
-    await exportMarkdown();
-    return;
-  }
-  if (format === 'json') {
-    exportJson();
-    return;
-  }
-
-  const root = new JSZip();
-  const zip = root.folder('story');
-  if (!zip) {
-    throw new Error('zip error');
-  }
-  const compiled = await compileMarkdown(await linesToMarkdown(story, async (s) => {
-    if (!s.includes(':')) {
-      return new URL(s, document.baseURI).href;
-    }
-    const [type, name] = db.splitMediaUrl(s);
-    if (!type) {
-      return s;
-    }
-    const directory = zip.folder(type);
-    if (!directory) {
-      throw new Error('unable to write to zip');
-    }
-    if (!directory.file(name)) {
-      const file = await db.findRawMediaByName(type, name);
-      if (!file) {
-        throw new Error('no such media found');
-      }
-      if (typeof file.blob === 'string') {
-        if (file.blob.startsWith('/')) {
-          return new URL(file.blob, document.baseURI).href;
-        }
-        return file.blob;
-      }
-      directory.file(name, file.blob);
-    }
-    return `./${type}/${name}`;
-  }));
-  const viewer = await fetch('./viewer.html').then((res) => res.text());
-  // Using <(slash)script> directly will cause problems...
-  const tag = 'script';
-  zip.file(
-    'viewer.html',
-    viewer.replace(
-      '<!-- LUA_INJECTION_POINT -->',
-      `<script type="application/lua">${compiled}</${tag}>`,
-    ),
-  );
-  saveAs(await root.generateAsync({ type: 'blob' }), 'story.zip');
+function returnToStart() {
+  story.value = null;
+  step.value = 'start';
 }
 </script>
 
@@ -120,25 +96,42 @@ async function exportStory(format: string) {
   <n-config-provider :theme="darkTheme" :locale="zhCN">
     <n-dialog-provider>
       <n-notification-provider>
-        <n-layout has-sider sider-placement="right" style="height: 100vh">
-          <n-layout-content>
-            <line-list :modelValue="story"
-              @update:modelValue="updateStory"
-              @export="exportStory"
-            >
-            </line-list>
-          </n-layout-content>
-          <n-layout-sider show-trigger="arrow-circle" width="500px" bordered>
-            <story-teller :chunk="chunk"></story-teller>
-          </n-layout-sider>
-        </n-layout>
+        <editor-start v-if="step === 'start'" @create="startNewStory" @import="importStory" />
+        <div v-else-if="story" class="project-shell">
+          <header class="project-header">
+            <n-button text @click="returnToStart">返回开始页</n-button>
+            <n-button secondary type="primary" @click="saveJson">保存 JSON</n-button>
+          </header>
+          <scene-setup v-if="step === 'scene'" v-model:background="background" v-model:music="music"
+            @back="returnToStart" @continue="finishSceneSetup"
+          />
+          <dialogue-composer v-else :modelValue="story" @update:modelValue="updateStory"
+            @scene-settings="step = 'scene'"
+          />
+        </div>
       </n-notification-provider>
     </n-dialog-provider>
   </n-config-provider>
 </template>
 
 <style>
-#app .n-layout-sider .n-layout-toggle-button {
-  z-index: 3;
+#app,
+body {
+  min-height: 100vh;
+}
+
+.project-shell {
+  min-height: 100vh;
+  background: #1b1b1f;
+}
+
+.project-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+  background: #18181c;
 }
 </style>

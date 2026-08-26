@@ -38,11 +38,9 @@ export interface GfStory {
 
 let id = 0;
 export function initUniqueId(previous: GfStory) {
-  if (previous.lines.length > 0) {
-    id = previous.lines.map((line) => parseInt(line.id, 10))
-      .filter((n) => Number.isFinite(n))
-      .reduce((a, b) => Math.max(a, b), 0);
-  }
+  id = previous.lines.map((line) => parseInt(line.id, 10))
+    .filter((n) => Number.isFinite(n))
+    .reduce((a, b) => Math.max(a, b), 0);
 }
 export function nextId() {
   id += 1;
