@@ -49,14 +49,43 @@ export function nextId() {
   return `${id}`;
 }
 
-export function defaultLine(): TextLine {
+export function createLine(type: Line['type'], lineId = nextId()): Line {
+  if (type === 'scene') {
+    return {
+      type,
+      id: lineId,
+      scene: 'background',
+      media: '',
+      style: 'cover',
+      classes: [],
+    };
+  }
+  if (type === 'option') {
+    return {
+      type,
+      id: lineId,
+      options: [
+        { key: '选项 1', value: '1' },
+        { key: '选项 2', value: '2' },
+      ],
+    };
+  }
   return {
-    type: 'text',
-    id: nextId(),
+    type,
+    id: lineId,
     narrator: '',
     remote: {},
     text: '',
     narratorColor: '#ffffff',
     sprites: [],
   };
+}
+
+export function convertLineType(line: Line, type: Line['type']): Line {
+  if (line.type === type) return line;
+  return createLine(type, line.id);
+}
+
+export function defaultLine(): TextLine {
+  return createLine('text') as TextLine;
 }

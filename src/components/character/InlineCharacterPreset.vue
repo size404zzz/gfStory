@@ -18,7 +18,12 @@ import assetCharacterPresets from '../../assets/characters.json';
 const props = defineProps<{
   characters: Character[],
   modelValue: string[],
-  remote: Record<string, boolean>,
+}>();
+
+const emit = defineEmits<{
+  'update:modelValue': [value: string[]],
+  'update:remote': [path: string, value: boolean],
+  'update:characters': [value: Character[]],
 }>();
 
 const characterPresets = assetCharacterPresets as unknown as GfCharactersInfo;
@@ -64,7 +69,12 @@ function addPreset() {
   const preset = selectedPreset.value;
   if (!characterName || !spriteName || !preset) return;
 
-  let character = props.characters.find((item) => item.name === characterName);
+  const nextCharacters = props.characters.map((item) => ({
+    ...item,
+    sprites: item.sprites.map((itemSprite) => ({ ...itemSprite })),
+  }));
+  let character = nextCharacters.find((item) => item.name === characterName);
+  let charactersChanged = false;
   if (!character) {
     character = {
       id: '',
@@ -72,7 +82,8 @@ function addPreset() {
       imported: true,
       sprites: [],
     };
-    props.characters.push(character);
+    nextCharacters.push(character);
+    charactersChanged = true;
   }
 
   const expectedUrl = `${IMAGE_PATH_PREFIX}${preset.path}`;
@@ -89,11 +100,16 @@ function addPreset() {
       scale: preset.scale,
     } satisfies CharacterSprite;
     character.sprites.push(sprite);
+    charactersChanged = true;
   }
 
   const path = `${character.name}/${sprite.name}`;
-  if (!props.modelValue.includes(path)) props.modelValue.push(path);
-  if (props.remote[path] === undefined) props.remote[path] = false;
+  const isNew = !props.modelValue.includes(path);
+  if (charactersChanged) emit('update:characters', nextCharacters);
+  if (isNew) {
+    emit('update:modelValue', [...props.modelValue, path]);
+    emit('update:remote', path, false);
+  }
   show.value = false;
   reset();
 }

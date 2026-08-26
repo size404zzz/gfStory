@@ -2,7 +2,7 @@
 import {
   NColorPicker, NForm, NFormItem, NFormItemRow, NSelect, NSpace,
 } from 'naive-ui';
-import { inject, ref, type Ref } from 'vue';
+import { computed, inject, type Ref } from 'vue';
 
 import CharacterListSelector from '../character/CharacterListSelector.vue';
 import InlineCharacterCreate from '../character/InlineCharacterCreate.vue';
@@ -18,23 +18,51 @@ const characters = inject<Ref<Character[]>>('characters')!;
 const characterStore = inject<Ref<Character[]>>('characterStore')!;
 const narrators = inject<Ref<{ value: string }[]>>('narrators')!;
 
-const color = ref(props.modelValue.narratorColor);
+const emit = defineEmits<{
+  'update:modelValue': [value: TextLine],
+}>();
+
+const color = computed(() => props.modelValue.narratorColor);
+
+function update(patch: Partial<TextLine>) {
+  emit('update:modelValue', { ...props.modelValue, ...patch });
+}
+
+function updateRemote(path: string, value: boolean) {
+  update({ remote: { ...props.modelValue.remote, [path]: value } });
+}
+
+function updateCharacters(value: Character[]) {
+  characterStore.value = value;
+}
+
+function updateSprites(sprites: string[]) {
+  update({ sprites });
+}
+
+function updateColor(value: string) {
+  update({ narratorColor: value });
+}
 </script>
 
 <template>
-  <!-- eslint-disable vue/no-mutating-props -->
   <n-form inline :modelValue="modelValue" style="flex-wrap: wrap">
     <n-form-item-row label="立绘" path="tachie">
       <n-space vertical>
         <n-space align="center">
           <character-list-selector :characters="characters" :modelValue="modelValue.sprites"
             :remote="modelValue.remote"
+            @update:modelValue="updateSprites" @update:remote="updateRemote"
           />
           <inline-character-preset :characters="characterStore"
-            :modelValue="modelValue.sprites" :remote="modelValue.remote"
+            :modelValue="modelValue.sprites"
+            @update:modelValue="updateSprites" @update:remote="updateRemote"
+            @update:characters="updateCharacters"
           />
           <inline-character-create :characters="characterStore"
-            :modelValue="modelValue.sprites" :remote="modelValue.remote"
+            :modelValue="modelValue.sprites"
+            @update:modelValue="updateSprites" @update:remote="updateRemote"
+            @update:characters="updateCharacters"
           />
         </n-space>
       </n-space>
@@ -42,7 +70,7 @@ const color = ref(props.modelValue.narratorColor);
     <n-form-item label="名称显示" path="narrator" class="narrator">
       <n-select
         :value="modelValue.narrator"
-        @update:value="(v) => modelValue.narrator = v ?? ''"
+        @update:value="(v) => update({ narrator: v ?? '' })"
         :style="{ '--narrator-text-color': color }"
         :options="narrators"
         clearable
@@ -54,13 +82,13 @@ const color = ref(props.modelValue.narratorColor);
       <n-color-picker
         :value="modelValue.narratorColor"
         :modes="['hex']"
-        @update:value="(v) => color = modelValue.narratorColor = v"
+        @update:value="updateColor"
       ></n-color-picker>
     </n-form-item>
     <n-form-item class="n-ck-editor" label="文字内容">
       <ckeditor :editor="ClassicEditor"
         :modelValue="modelValue.text"
-        @update:modelValue="(v) => modelValue.text = v"
+        @update:modelValue="(v) => update({ text: v })"
       ></ckeditor>
     </n-form-item>
   </n-form>

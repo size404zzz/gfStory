@@ -36,10 +36,7 @@ const story = loadStorageOrDefault();
 initUniqueId(story);
 
 async function updateStory(s: GfStory) {
-  /*
-   * "story" and "s" should actually be the same object.
-   * We are doing the following... for fun.
-   */
+  // Keep the app-level story identity stable while replacing its committed data.
   story.characters = s.characters;
   story.lines = s.lines;
   chunk.value = await compileMarkdown(await linesToMarkdown(story));

@@ -19,7 +19,7 @@ import ScriptImportModal from './ScriptImportModal.vue';
 import StoryLineView from './StoryLineView.vue';
 import StoryList from '../simulator/StoryList.vue';
 import {
-  defaultLine, nextId, type GfStory, type Line, type OptionLine,
+  createLine, defaultLine, initUniqueId, nextId, type GfStory, type Line, type OptionLine,
   type SceneLine, type TextLine,
 } from '../../types/lines';
 import { labelCharactersWithIds, type Character } from '../../types/character';
@@ -29,8 +29,13 @@ import { db } from '../../db/media';
 const props = defineProps<{
   modelValue: GfStory,
 }>();
-const characters = ref(props.modelValue.characters);
-const lines = ref(props.modelValue.lines);
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+const characters = ref(clone(props.modelValue.characters));
+const lines = ref(clone(props.modelValue.lines));
 
 provide('characters', computed(() => labelCharactersWithIds(characters.value)));
 provide('characterStore', characters);
@@ -131,6 +136,21 @@ const canApplyBatch = computed(() => (
   && (batchFind.value !== '' || (shouldChangeNarrator.value && batchNarrator.value !== null))
 ));
 
+function snapshotStory(): GfStory {
+  return {
+    characters: clone(characters.value),
+    lines: clone(lines.value),
+  };
+}
+
+function commitStory() {
+  // Keep edits isolated from the rendered story until the user commits them.
+  const next = snapshotStory();
+  characters.value = next.characters;
+  lines.value = next.lines;
+  emit('update:modelValue', next);
+}
+
 function setActive(id: string, keepSelection = false) {
   activeId.value = id;
   if (!keepSelection) selectedIds.value = id ? [id] : [];
@@ -173,31 +193,22 @@ function createTextLine() {
 }
 
 function createSceneLine(): SceneLine {
-  return {
-    type: 'scene',
-    id: nextId(),
-    scene: 'background',
-    media: '',
-    style: 'cover',
-    classes: [],
-  };
+  return createLine('scene') as SceneLine;
 }
 
 function createOptionLine(): OptionLine {
-  return {
-    type: 'option',
-    id: nextId(),
-    options: [
-      { key: '选项 1', value: '1' },
-      { key: '选项 2', value: '2' },
-    ],
-  };
+  return createLine('option') as OptionLine;
 }
 
 function addLine(type: NewLineType) {
   if (type === 'text') insertLine(createTextLine());
   if (type === 'scene') insertLine(createSceneLine());
   if (type === 'option') insertLine(createOptionLine());
+}
+
+function updateLine(value: Line) {
+  const index = lines.value.findIndex((line) => line.id === value.id);
+  if (index !== -1) lines.value.splice(index, 1, value);
 }
 
 function duplicateSelected() {
@@ -213,7 +224,8 @@ function duplicateSelected() {
     }
   }
   if (copies.length > 0) {
-    activeId.value = copies[0];
+    const [firstCopy] = copies;
+    activeId.value = firstCopy;
     selectedIds.value = copies;
   }
 }
@@ -245,14 +257,17 @@ function openBatchEditor() {
 
 function applyBatchChanges() {
   if (!canApplyBatch.value) return;
-  lines.value.forEach((line) => {
-    if (line.type !== 'text' || !batchTargetIds.value.has(line.id)) return;
-    if (batchFind.value !== '') {
-      line.text = line.text.split(batchFind.value).join(batchReplace.value);
-    }
-    if (shouldChangeNarrator.value && batchNarrator.value !== null) {
-      line.narrator = batchNarrator.value;
-    }
+  lines.value = lines.value.map((line) => {
+    if (line.type !== 'text' || !batchTargetIds.value.has(line.id)) return line;
+    return {
+      ...line,
+      text: batchFind.value === ''
+        ? line.text
+        : line.text.split(batchFind.value).join(batchReplace.value),
+      narrator: shouldChangeNarrator.value && batchNarrator.value !== null
+        ? batchNarrator.value
+        : line.narrator,
+    };
   });
   showBatchEditor.value = false;
 }
@@ -289,7 +304,7 @@ function applyScriptImport(story: GfStory, mode: 'replace' | 'append') {
     lines.value.push(...story.lines.map((line) => ({ ...line, id: nextId() })));
   }
   resetSelection(lines.value[0]?.id ?? '');
-  emit('update:modelValue', props.modelValue);
+  commitStory();
 }
 
 const dialog = useDialog();
@@ -308,30 +323,31 @@ async function importJson(options: UploadCustomRequestOptions) {
   if (!story.characters.every((c) => c.id && c.name && Array.isArray(c.sprites)
     && c.sprites.every((s) => s.id && s.name && s.url))) return;
   if (!story.lines.every((line) => line.id && line.type)) return;
-  const current = props.modelValue;
-  current.characters.splice(0, current.characters.length, ...story.characters);
-  current.lines.splice(0, current.lines.length, ...story.lines);
-  resetSelection(current.lines[0]?.id ?? '');
-  emit('update:modelValue', current);
+  characters.value = clone(story.characters);
+  lines.value = clone(story.lines);
+  initUniqueId({ characters: [], lines: lines.value });
+  resetSelection(lines.value[0]?.id ?? '');
+  commitStory();
 }
 
 async function importMarkdownFile(markdown: string) {
   const parsed = importMarkdownString(markdown);
   if (!parsed) return;
   const mapping = await db.importResources(parsed.resources);
-  parsed.lines.forEach((line) => {
-    line.id = nextId();
-    if (line.type === 'scene' && mapping[line.media]) line.media = mapping[line.media];
+  lines.value = parsed.lines.map((line) => {
+    const next = { ...line, id: nextId() };
+    if (next.type === 'scene' && mapping[next.media]) {
+      return { ...next, media: mapping[next.media] };
+    }
+    return next;
   });
-  (parsed.characters as Character[]).forEach((character) => {
-    character.imported = true;
-  });
-  const current = props.modelValue;
-  current.lines.splice(0, current.lines.length, ...parsed.lines);
-  current.characters.splice(0, current.characters.length, ...labelCharactersWithIds(parsed.characters as Character[]));
-  lines.value = current.lines;
-  resetSelection(current.lines[0]?.id ?? '');
-  emit('update:modelValue', current);
+  const importedCharacters = (parsed.characters as Character[]).map((character) => ({
+    ...character,
+    imported: true,
+  }));
+  characters.value = labelCharactersWithIds(importedCharacters);
+  resetSelection(lines.value[0]?.id ?? '');
+  commitStory();
 }
 
 async function importMarkdown(options: UploadCustomRequestOptions) {
@@ -390,19 +406,17 @@ function doIo(value: string) {
     case 'json':
     case 'markdown':
     case 'zip':
-      emit('update:modelValue', props.modelValue);
+      commitStory();
       emit('export', value);
       break;
     case 'import-simulator':
       showStorySelect.value = true;
       break;
     case 'reset': {
-      const current = props.modelValue;
-      current.characters.splice(0);
-      current.lines.splice(0);
-      lines.value = current.lines;
+      characters.value = [];
+      lines.value = [];
       resetSelection('');
-      emit('update:modelValue', current);
+      commitStory();
       break;
     }
     default:
@@ -476,7 +490,7 @@ function doIo(value: string) {
           <n-icon><move-down-filled /></n-icon>
         </n-button>
         <n-button secondary :disabled="lines.length === 0" @click="openBatchEditor">批量编辑</n-button>
-        <n-button type="warning" @click="emit('update:modelValue', modelValue)">
+        <n-button type="warning" @click="commitStory">
           <n-icon><refresh-filled /></n-icon>暂存并预览
         </n-button>
         <n-button quaternary title="帮助" @click="showHelpDialog">
@@ -543,7 +557,7 @@ function doIo(value: string) {
             </n-button>
           </n-space>
         </header>
-        <story-line-view :modelValue="activeLine" />
+        <story-line-view :modelValue="activeLine" @update:modelValue="updateLine" />
       </template>
       <n-empty v-else description="从左侧选择节点，或创建一个新节点" />
     </main>

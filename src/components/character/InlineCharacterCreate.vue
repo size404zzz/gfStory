@@ -11,7 +11,12 @@ import { getUniqueName, type Character } from '../../types/character';
 const props = defineProps<{
   characters: Character[],
   modelValue: string[],
-  remote: Record<string, boolean>,
+}>();
+
+const emit = defineEmits<{
+  'update:modelValue': [value: string[]],
+  'update:remote': [path: string, value: boolean],
+  'update:characters': [value: Character[]],
 }>();
 
 const show = ref(false);
@@ -35,7 +40,7 @@ function create() {
   const name = getUniqueName(characterName.value.trim(), props.characters, 0)
     ?? characterName.value.trim();
   const sprite = spriteName.value.trim();
-  props.characters.push({
+  const character = {
     id: '',
     name,
     imported: false,
@@ -46,9 +51,11 @@ function create() {
       center: [-1, -1],
       scale: -1,
     }],
-  });
-  props.modelValue.push(`${name}/${sprite}`);
-  props.remote[`${name}/${sprite}`] = false;
+  } satisfies Character;
+  emit('update:characters', [...props.characters, character]);
+  const path = `${name}/${sprite}`;
+  emit('update:modelValue', [...props.modelValue, path]);
+  emit('update:remote', path, false);
   show.value = false;
   reset();
 }

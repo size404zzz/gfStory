@@ -2,7 +2,7 @@
 import {
   NCascader, NCheckbox, NSpace, type CascaderOption,
 } from 'naive-ui';
-import { computed, h, ref } from 'vue';
+import { computed, h } from 'vue';
 
 import MediaItem from '../media/MediaItem.vue';
 import {
@@ -16,7 +16,7 @@ const props = defineProps<{
   remoteRecord: Record<string, boolean>,
   characters: Character[],
 }>();
-const namePath = ref<readonly string[]>(props.modelValue.split('/'));
+const namePath = computed(() => props.modelValue.split('/'));
 const id = computed(() => (getSprite(
   namePath.value as [string, string],
   props.characters,
@@ -43,23 +43,21 @@ function renderLabel(o: CascaderOption) {
 
 const emit = defineEmits<{
   'update:modelValue': [modelValue: string],
+  'update:remote': [path: string, value: boolean],
 }>();
 
-const remote = ref(!!props.remoteRecord[props.modelValue]);
+const remote = computed(() => !!props.remoteRecord[props.modelValue]);
 function updateSelected(_v: never, _option: never, path: SpritePath) {
-  namePath.value = getNamePath(path);
-  emit('update:modelValue', namePath.value.join('/'));
+  emit('update:modelValue', getNamePath(path).join('/'));
 }
 function updateRemote(r: boolean) {
-  remote.value = r;
-  // eslint-disable-next-line vue/no-mutating-props
-  props.remoteRecord[namePath.value.join('/')] = r;
+  emit('update:remote', namePath.value.join('/'), r);
 }
 const url = computed(() => {
   if (namePath.value.length !== 2) {
     return '';
   }
-  return getSprite(namePath.value as NamePath, props.characters)?.url ?? '';
+  return getSprite(namePath.value as unknown as NamePath, props.characters)?.url ?? '';
 });
 </script>
 
