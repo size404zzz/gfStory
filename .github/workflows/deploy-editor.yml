@@ -1,0 +1,94 @@
+name: Deploy Editor From Cached Resources
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gfstory-production
+  cancel-in-progress: true
+
+jobs:
+  deploy-editor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Restore cached images
+        id: restore-image-resources
+        uses: actions/cache/restore@v5
+        with:
+          path: unpack/images
+          key: gf-image-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_backgrounds.py', 'unpack/tests/test_characters.py', 'unpack/gf-data-ch/resdata_no_hash.json') }}
+
+      - name: Restore cached audio
+        id: restore-audio-resources
+        uses: actions/cache/restore@v5
+        with:
+          path: unpack/audio
+          key: gf-audio-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_audio.py', 'unpack/gf-data-ch/resdata_no_hash.json') }}
+
+      - name: Restore cached stories
+        id: restore-story-resources
+        uses: actions/cache/restore@v5
+        with:
+          path: unpack/stories
+          key: gf-story-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_audio.py', 'unpack/tests/test_characters.py', 'unpack/tests/test_stories.py', 'unpack/gf-data-ch/resdata_no_hash.json', 'unpack/downloader.patch') }}
+
+      - name: Require cached resources
+        run: |
+          test "${{ steps.restore-image-resources.outputs.cache-hit }}" = "true"
+          test "${{ steps.restore-audio-resources.outputs.cache-hit }}" = "true"
+          test "${{ steps.restore-story-resources.outputs.cache-hit }}" = "true"
+
+      - name: Move cached resources
+        run: |
+          cp unpack/audio/audio.json src/assets/audio.json
+          cp unpack/images/backgrounds.json src/assets/backgrounds.json
+          cp unpack/images/characters.json src/assets/characters.json
+          cp unpack/stories/stories.json src/assets/stories.json
+          cp unpack/stories/chapters.json src/assets/chapters.json
+          cp -R unpack/audio public/audio
+          cp -R unpack/images public/images
+          cp -R unpack/stories public/stories
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.4.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build site
+        run: |
+          pnpm build-index
+          pnpm build
+
+      - name: Validate site output
+        run: |
+          test -s dist/index.html
+          test -s dist/simulator.html
+          test -s dist/viewer.html
+          test -d dist/audio
+          test -d dist/images
+          test -d dist/stories
+
+      - name: Publish to Cloudflare Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          command: deploy
