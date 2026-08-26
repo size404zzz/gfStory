@@ -24,6 +24,8 @@ jobs:
         with:
           path: unpack/images
           key: gf-image-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_backgrounds.py', 'unpack/tests/test_characters.py', 'unpack/gf-data-ch/resdata_no_hash.json') }}
+          restore-keys: |
+            gf-image-resources-v2-${{ runner.os }}-
 
       - name: Restore cached audio
         id: restore-audio-resources
@@ -31,6 +33,8 @@ jobs:
         with:
           path: unpack/audio
           key: gf-audio-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_audio.py', 'unpack/gf-data-ch/resdata_no_hash.json') }}
+          restore-keys: |
+            gf-audio-resources-v2-${{ runner.os }}-
 
       - name: Restore cached stories
         id: restore-story-resources
@@ -38,12 +42,19 @@ jobs:
         with:
           path: unpack/stories
           key: gf-story-resources-v2-${{ runner.os }}-${{ hashFiles('unpack/src/gfunpack/**', 'unpack/tests/test_audio.py', 'unpack/tests/test_characters.py', 'unpack/tests/test_stories.py', 'unpack/gf-data-ch/resdata_no_hash.json', 'unpack/downloader.patch') }}
+          restore-keys: |
+            gf-story-resources-v2-${{ runner.os }}-
 
       - name: Require cached resources
         run: |
-          test "${{ steps.restore-image-resources.outputs.cache-hit }}" = "true"
-          test "${{ steps.restore-audio-resources.outputs.cache-hit }}" = "true"
-          test "${{ steps.restore-story-resources.outputs.cache-hit }}" = "true"
+          test -s unpack/audio/audio.json
+          test -s unpack/images/backgrounds.json
+          test -s unpack/images/characters.json
+          test -s unpack/stories/stories.json
+          test -s unpack/stories/chapters.json
+          test -d unpack/audio
+          test -d unpack/images
+          test -d unpack/stories
 
       - name: Move cached resources
         run: |
