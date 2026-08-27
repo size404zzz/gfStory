@@ -25,7 +25,8 @@ class FakeAudio {
 
   play = vi.fn().mockResolvedValue(undefined);
 
-  constructor() {
+  constructor(source?: string) {
+    this.src = source ?? '';
     FakeAudio.instances.push(this);
   }
 
@@ -41,19 +42,20 @@ afterEach(() => {
 });
 
 describe('audio preview', () => {
-  test('reuses one player and stops the previous preview before playing another', async () => {
+  test('stops and releases the previous preview before playing another', async () => {
     const states: string[] = [];
     const unsubscribe = subscribeAudioPreview((value) => states.push(value.source));
 
     await playAudioPreview('/audio/first.m4a');
     await playAudioPreview('/audio/second.m4a');
 
-    const [player] = FakeAudio.instances;
-    expect(FakeAudio.instances).toHaveLength(1);
-    expect(player.pause).toHaveBeenCalledTimes(2);
-    expect(player.src).toBe('/audio/second.m4a');
-    expect(player.play).toHaveBeenCalledTimes(2);
-    expect(states).toEqual(['', '/audio/first.m4a', '/audio/second.m4a']);
+    const [firstPlayer, secondPlayer] = FakeAudio.instances;
+    expect(FakeAudio.instances).toHaveLength(2);
+    expect(firstPlayer.pause).toHaveBeenCalledTimes(1);
+    expect(firstPlayer.src).toBe('');
+    expect(secondPlayer.src).toBe('/audio/second.m4a');
+    expect(secondPlayer.play).toHaveBeenCalledTimes(1);
+    expect(states).toEqual(['', '', '/audio/first.m4a', '', '/audio/second.m4a']);
     unsubscribe();
   });
 });

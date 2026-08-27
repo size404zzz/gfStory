@@ -108,8 +108,16 @@ const musicTracks = computed<MusicPreset[]>(() => Object.entries(
   url: `${AUDIO_PATH_PREFIX}${path}`,
 })).sort((left, right) => left.name.localeCompare(right.name)));
 
+const backgroundRatios = ref<Record<string, string>>({});
 const playingTrack = ref('');
 let unsubscribeAudioPreview = () => {};
+
+function rememberBackgroundRatio(item: BackgroundPreset, event: Event) {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.naturalWidth || !image.naturalHeight) return;
+  const ratio = `${image.naturalWidth} / ${image.naturalHeight}`;
+  if (backgroundRatios.value[item.url] !== ratio) backgroundRatios.value[item.url] = ratio;
+}
 
 function stopMusicPreview() {
   stopAudioPreview();
@@ -161,9 +169,12 @@ onUnmounted(() => {
                 class="background-choice"
                 :class="{ selected: background === item.url }"
                 :aria-pressed="background === item.url"
+                :style="{ aspectRatio: backgroundRatios[item.url] ?? '1 / 1' }"
                 @click="emit('update:background', item.url)"
               >
-                <img :src="item.url" :alt="item.name" loading="lazy" />
+                <img :src="item.url" :alt="item.name" loading="lazy"
+                  @load="rememberBackgroundRatio(item, $event)"
+                />
                 <span>{{ item.name }}</span>
               </button>
             </div>
@@ -178,9 +189,12 @@ onUnmounted(() => {
                 class="background-choice"
                 :class="{ selected: background === item.url }"
                 :aria-pressed="background === item.url"
+                :style="{ aspectRatio: backgroundRatios[item.url] ?? '1 / 1' }"
                 @click="emit('update:background', item.url)"
               >
-                <img :src="item.url" :alt="item.name" loading="lazy" />
+                <img :src="item.url" :alt="item.name" loading="lazy"
+                  @load="rememberBackgroundRatio(item, $event)"
+                />
                 <span>{{ item.name }}</span>
               </button>
             </div>
@@ -325,10 +339,10 @@ onUnmounted(() => {
 }
 
 .background-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
-  grid-auto-flow: row;
+  display: flex;
+  flex-wrap: wrap;
   align-content: start;
+  align-items: flex-start;
   gap: 10px;
   height: min(56vh, 580px);
   min-width: 0;
@@ -338,9 +352,9 @@ onUnmounted(() => {
 
 .background-choice {
   display: block;
-  width: 100%;
+  box-sizing: border-box;
+  flex: 0 0 calc((100% - 10px) / 2);
   position: relative;
-  aspect-ratio: 16 / 9;
   min-width: 0;
   overflow: hidden;
   padding: 0;
@@ -377,8 +391,7 @@ onUnmounted(() => {
 .background-choice img {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
 }
 
 .background-choice span {
