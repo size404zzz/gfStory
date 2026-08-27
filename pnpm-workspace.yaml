@@ -1,5 +1,7 @@
+packages:
+  - .
 allowBuilds:
-  '@ckeditor/ckeditor5-vue': set this to true or false
-  '@ckeditor/vite-plugin-ckeditor5': set this to true or false
-  esbuild: set this to true or false
-  vue-demi: set this to true or false
+  '@ckeditor/ckeditor5-vue': true
+  '@ckeditor/vite-plugin-ckeditor5': true
+  esbuild: true
+  vue-demi: true
