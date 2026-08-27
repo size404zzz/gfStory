@@ -1,19 +1,24 @@
 <script setup lang="ts">
 import {
-  ArrowDropDownFilled, ArrowRightFilled, PauseFilled, PlayArrowFilled,
+  ArrowDropDownFilled, ArrowRightFilled, DeleteOutlined, DownloadOutlined,
+  PauseFilled, PlayArrowFilled, PlaylistAddOutlined, RestartAltOutlined,
+  RestoreFromTrashOutlined,
 } from '@vicons/material';
 import {
-  NButton, NIcon, NSpace, NTooltip,
+  NButton, NIcon, NPopconfirm, NSpace, NTooltip,
 } from 'naive-ui';
 import {
-  computed, onMounted, onUnmounted, ref,
+  computed, onMounted, onUnmounted, ref, watch,
 } from 'vue';
+import { saveAs } from 'file-saver';
 
 import EditorStoryPreview from './EditorStoryPreview.vue';
 import {
   playAudioPreview, stopAudioPreview, subscribeAudioPreview,
 } from './audioPreview';
 import audioPresets from '../../assets/audio.json';
+import backgroundCategories from '../../assets/background-categories.json';
+import backgroundRemovals from '../../assets/background-removals.json';
 import backgroundPresets from '../../assets/backgrounds.json';
 import {
   AUDIO_PATH_PREFIX, IMAGE_PATH_PREFIX, type AudioInfo, type BackgroundInfo,
@@ -23,6 +28,18 @@ type BackgroundPreset = {
   name: string,
   id: number,
   url: string,
+};
+
+type BackgroundGroup = {
+  id: string,
+  label: string,
+  backgrounds: BackgroundPreset[],
+};
+
+type BackgroundReviewState = {
+  categories: Record<string, string>,
+  labels: Record<string, string>,
+  removed: Record<string, string>,
 };
 
 type MusicPreset = {
@@ -37,7 +54,15 @@ type MusicGroup = {
   tracks: MusicPreset[],
 };
 
-defineProps<{
+type MusicReviewState = {
+  labels: Record<string, string>,
+  customGroups: string[],
+  deletedGroups: Record<string, string>,
+  assignments: Record<string, string>,
+  removed: Record<string, string>,
+};
+
+const props = defineProps<{
   background: string,
   music: string,
 }>();
@@ -49,46 +74,33 @@ const emit = defineEmits<{
   continue: [],
 }>();
 
-const COMMON_BACKGROUND_SPECS = [
-  '0', '1', '128', '129', '136', '137', '138', '139', '140', '141', '142', '143',
-  '146', '15', '157', '158', '159', '160', '161', '162', '163', '166', '167', '168',
-  '169', '179', '18', '180', '181', '182', '183', '186', '187', '195', '197', '200',
-  '201', '202', '203', '204', '206', '207', '208', '209', '21', '219', '22', '221',
-  '222', '223', '224', '225', '226', '227', '229', '231', '232', '233', '234', '235',
-  '239', '240', '242', '247', '249', '259', '260', '262', '265', '267', '269', '270',
-  '271', '272', '273', '276', '281', '282', '283', '287', '288', '289', '29', '296',
-  '297', '298', '299', '3', '300', '301', '302', '312', '313', '315', '316', '317',
-  '318', '320', '321', '322', '323', '324', '325', '326', '327', '328', '330', '331',
-  '332', '336', '337', '338', '339', '34', '340', '341', '343', '344', '345', '346',
-  '347', '348', '349', '350', '351', '352', '353', '356', '357', '358', '364', '365',
-  '367', '380', '381', '384', '388', '39', '390', '393', '394', '395', '396', '397',
-  '398', '4', '40', '408', '409', '41', '410', '412', '413', '414', '415', '417',
-  '418', '419', '420', '421', '438', '439', '446', '447', '448', '449', '450', '455',
-  '456', '459', '46', '47', '48', '460-487', '5', '506', '507', '510', '527-534',
-  '536', '54', '541', '542', '547', '548', '549', '55', '550', '551', '553', '554',
-  '563-569', '572-578', '508', '581', '582', '585-599', '6', '604', '605', '607',
-  '613', '632', '638', '639', '644', '645', '650-658', '671', '673', '674', '683',
-  '684', '685', '688', '697', '698', '699', '7', '70', '702', '703', '704', '71',
-  '710-714', '72', '719-723', '725-727', '73', '729-733', '735', '741-760', '764',
-  '766', '768', '769', '771', '772', '774', '777-780', '785', '786', '79', '792',
-  '794', '797', '798', '799', '8', '80', '801-805', '81', '810-812', '815', '816',
-  '82', '819-822', '83', '832-840', '849', '85', '851', '852', '854', '86', '88',
-  '89', '890', '891', '893', '900', '901', '96', '97', '98', '99',
+const BACKGROUND_CATEGORY_ORDER = [
+  'city', 'nature', 'indoor', 'battle', 'character', 'event', 'special', 'other',
 ];
 
-function expandBackgroundIds(specs: string[]) {
-  return specs.flatMap((spec) => {
-    const range = /^(\d+)-(\d+)$/.exec(spec);
-    if (!range) return [Number(spec)];
-    const start = Number(range[1]);
-    const end = Number(range[2]);
-    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
-  });
+const BACKGROUND_CATEGORY_LABELS: Record<string, string> = {
+  city: '城市景观',
+  nature: '自然景观',
+  indoor: '室内场景',
+  battle: '战斗场景',
+  character: '人物弧光',
+  event: '心智平层',
+  special: '其他画面',
+  other: '联动角色',
+};
+
+const BACKGROUND_REVIEW_STORAGE_KEY = 'gfstory.background-category-review.v1';
+const DEFAULT_BACKGROUND_CATEGORIES = backgroundCategories as Record<string, string>;
+const DEFAULT_BACKGROUND_REMOVALS = backgroundRemovals as string[];
+
+function defaultBackgroundRemovals() {
+  return Object.fromEntries(
+    DEFAULT_BACKGROUND_REMOVALS.map((identifier) => [identifier, DEFAULT_BACKGROUND_CATEGORIES[identifier] ?? 'other']),
+  );
 }
 
-const commonBackgroundOrder = new Map(
-  expandBackgroundIds(COMMON_BACKGROUND_SPECS).map((id, index) => [id, index]),
-);
+const UNGROUPED_MUSIC_GROUP = '_ungrouped';
+const MUSIC_REVIEW_STORAGE_KEY = 'gfstory.music-catalog-review.v1';
 
 const backgrounds = computed<BackgroundPreset[]>(() => Object.entries(
   backgroundPresets as BackgroundInfo,
@@ -96,17 +108,56 @@ const backgrounds = computed<BackgroundPreset[]>(() => Object.entries(
   name,
   id: Number(name),
   url: `${IMAGE_PATH_PREFIX}${path}`,
-})));
+})).sort((left, right) => left.id - right.id));
 
-const commonBackgrounds = computed(() => backgrounds.value
-  .filter((item) => commonBackgroundOrder.has(item.id))
-  .sort((left, right) => (
-    commonBackgroundOrder.get(left.id)! - commonBackgroundOrder.get(right.id)!
-  )));
+const categoryByBackground = ref<Record<string, string>>({ ...DEFAULT_BACKGROUND_CATEGORIES });
+const categoryLabels = ref<Record<string, string>>({ ...BACKGROUND_CATEGORY_LABELS });
+const removedBackgrounds = ref<Record<string, string>>(defaultBackgroundRemovals());
+const reviewingBackgrounds = ref(false);
+const draggingBackground = ref<string | null>(null);
 
-const cgBackgrounds = computed(() => backgrounds.value
-  .filter((item) => !commonBackgroundOrder.has(item.id))
-  .sort((left, right) => right.id - left.id));
+function knownBackgroundCategory(category: unknown): category is string {
+  return typeof category === 'string' && BACKGROUND_CATEGORY_ORDER.includes(category);
+}
+
+function backgroundCategory(item: BackgroundPreset) {
+  const category = categoryByBackground.value[item.name] ?? 'other';
+  return knownBackgroundCategory(category) ? category : 'other';
+}
+
+function backgroundCategoryLabel(category: string) {
+  return categoryLabels.value[category]?.trim() || BACKGROUND_CATEGORY_LABELS[category];
+}
+
+function backgroundRemoved(item: BackgroundPreset) {
+  return Object.prototype.hasOwnProperty.call(removedBackgrounds.value, item.name);
+}
+
+const backgroundGroups = computed<BackgroundGroup[]>(() => {
+  const groups = new Map(BACKGROUND_CATEGORY_ORDER.map((id) => [id, [] as BackgroundPreset[]]));
+  backgrounds.value.forEach((item) => {
+    if (!backgroundRemoved(item)) groups.get(backgroundCategory(item))!.push(item);
+  });
+  return BACKGROUND_CATEGORY_ORDER.map((id) => ({
+    id,
+    label: backgroundCategoryLabel(id),
+    backgrounds: groups.get(id)!,
+  })).filter((group) => group.backgrounds.length > 0);
+});
+
+const reviewBackgroundGroups = computed<BackgroundGroup[]>(() => {
+  const groups = new Map(BACKGROUND_CATEGORY_ORDER.map((id) => [id, [] as BackgroundPreset[]]));
+  backgrounds.value.forEach((item) => {
+    if (!backgroundRemoved(item)) groups.get(backgroundCategory(item))!.push(item);
+  });
+  return BACKGROUND_CATEGORY_ORDER.map((id) => ({
+    id,
+    label: backgroundCategoryLabel(id),
+    backgrounds: groups.get(id)!,
+  }));
+});
+
+const removedBackgroundItems = computed(() => backgrounds.value.filter(backgroundRemoved));
 
 const musicTracks = computed<MusicPreset[]>(() => Object.entries(
   audioPresets as AudioInfo,
@@ -124,28 +175,250 @@ function musicGroupId(name: string) {
   return alphabeticPrefix?.toUpperCase() ?? 'other';
 }
 
-function musicGroupLabel(id: string) {
+function defaultMusicGroupLabel(id: string) {
+  if (id === UNGROUPED_MUSIC_GROUP) return '未分组';
   if (id === 'number') return '数字编号';
   if (id === 'other') return '其他';
   return id;
 }
 
-const musicGroups = computed<MusicGroup[]>(() => {
-  const groups = new Map<string, MusicPreset[]>();
+function musicGroupLabel(id: string) {
+  return musicLabels.value[id]?.trim() || defaultMusicGroupLabel(id);
+}
+
+const reviewingMusic = ref(false);
+const musicLabels = ref<Record<string, string>>({});
+const customMusicGroups = ref<string[]>([]);
+const deletedMusicGroups = ref<Record<string, string>>({});
+const musicAssignments = ref<Record<string, string>>({});
+const removedMusicTracks = ref<Record<string, string>>({});
+const draggingTrack = ref<string | null>(null);
+let musicGroupCounter = 0;
+
+function trackRemoved(track: MusicPreset) {
+  return Object.prototype.hasOwnProperty.call(removedMusicTracks.value, track.id);
+}
+
+function trackGroupId(track: MusicPreset) {
+  const override = musicAssignments.value[track.id];
+  if (override !== undefined && override !== UNGROUPED_MUSIC_GROUP && deletedMusicGroups.value[override] === undefined) {
+    return override;
+  }
+  if (override === UNGROUPED_MUSIC_GROUP) return override;
+  const derived = musicGroupId(track.name);
+  return deletedMusicGroups.value[derived] !== undefined ? UNGROUPED_MUSIC_GROUP : derived;
+}
+
+function materializeMusicLabels() {
   musicTracks.value.forEach((track) => {
     const id = musicGroupId(track.name);
-    const tracks = groups.get(id) ?? [];
-    tracks.push(track);
-    groups.set(id, tracks);
+    if (!(id in musicLabels.value)) musicLabels.value[id] = defaultMusicGroupLabel(id);
   });
-  return Array.from(groups, ([id, tracks]) => ({
-    id,
-    label: musicGroupLabel(id),
-    tracks,
-  })).sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
+  customMusicGroups.value.forEach((id) => {
+    if (!(id in musicLabels.value)) musicLabels.value[id] = '新条目';
+  });
+  if (!(UNGROUPED_MUSIC_GROUP in musicLabels.value)) {
+    musicLabels.value[UNGROUPED_MUSIC_GROUP] = defaultMusicGroupLabel(UNGROUPED_MUSIC_GROUP);
+  }
+}
+
+const activeMusicTracks = computed(() => musicTracks.value.filter((track) => !trackRemoved(track)));
+
+const removedMusicItems = computed(() => musicTracks.value.filter(trackRemoved));
+
+function buildMusicBuckets() {
+  const buckets = new Map<string, MusicPreset[]>();
+  activeMusicTracks.value.forEach((track) => {
+    const id = trackGroupId(track);
+    const tracks = buckets.get(id) ?? [];
+    tracks.push(track);
+    buckets.set(id, tracks);
+  });
+  return buckets;
+}
+
+function sortMusicGroups(groups: MusicGroup[]) {
+  return groups.sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
+}
+
+const musicGroups = computed<MusicGroup[]>(() => sortMusicGroups(Array.from(
+  buildMusicBuckets(),
+  ([id, tracks]) => ({ id, label: musicGroupLabel(id), tracks }),
+)));
+
+const reviewMusicGroups = computed<MusicGroup[]>(() => {
+  const buckets = buildMusicBuckets();
+  const groups: MusicGroup[] = [];
+  customMusicGroups.value.forEach((id) => {
+    groups.push({ id, label: musicGroupLabel(id), tracks: buckets.get(id) ?? [] });
+  });
+  Array.from(buckets.keys())
+    .filter((id) => !customMusicGroups.value.includes(id))
+    .forEach((id) => groups.push({ id, label: musicGroupLabel(id), tracks: buckets.get(id)! }));
+  return sortMusicGroups(groups.filter(
+    (group) => group.tracks.length > 0 || customMusicGroups.value.includes(group.id),
+  ));
 });
 
+function createMusicGroup() {
+  let id = '';
+  do {
+    musicGroupCounter += 1;
+    id = `_custom_${musicGroupCounter}`;
+  } while (customMusicGroups.value.includes(id));
+  const existingLabels = new Set(Object.values(musicLabels.value));
+  let suffix = 0;
+  while (existingLabels.has(`新条目${suffix ? ` ${suffix}` : ''}`)) suffix += 1;
+  customMusicGroups.value = [...customMusicGroups.value, id];
+  musicLabels.value[id] = `新条目${suffix ? ` ${suffix}` : ''}`;
+}
+
+function deleteMusicGroup(group: MusicGroup) {
+  if (group.id === UNGROUPED_MUSIC_GROUP) return;
+  if (customMusicGroups.value.includes(group.id)) {
+    customMusicGroups.value = customMusicGroups.value.filter((id) => id !== group.id);
+  } else {
+    deletedMusicGroups.value = { ...deletedMusicGroups.value, [group.id]: '' };
+  }
+  const retargeted: Record<string, string> = {};
+  Object.entries(musicAssignments.value).forEach(([identifier, target]) => {
+    retargeted[identifier] = target === group.id ? UNGROUPED_MUSIC_GROUP : target;
+  });
+  musicAssignments.value = retargeted;
+  const remainingLabels = { ...musicLabels.value };
+  delete remainingLabels[group.id];
+  musicLabels.value = remainingLabels;
+  if (playingTrack.value !== '' && group.tracks.some((track) => track.id === playingTrack.value)) {
+    stopMusicPreview();
+  }
+}
+
+function removeMusicTrack(track: MusicPreset) {
+  if (trackRemoved(track)) return;
+  removedMusicTracks.value = {
+    ...removedMusicTracks.value,
+    [track.id]: trackGroupId(track),
+  };
+  if (playingTrack.value === track.id) stopMusicPreview();
+  if (props.music === track.url) emit('update:music', '');
+}
+
+function restoreMusicTrack(track: MusicPreset) {
+  const remainingRemoved = { ...removedMusicTracks.value };
+  delete remainingRemoved[track.id];
+  removedMusicTracks.value = remainingRemoved;
+}
+
+function startTrackDrag(track: MusicPreset) {
+  draggingTrack.value = track.id;
+}
+
+function finishTrackDrag() {
+  draggingTrack.value = null;
+}
+
+function dropTrackToGroup(groupId: string) {
+  const identifier = draggingTrack.value;
+  draggingTrack.value = null;
+  if (identifier === null) return;
+  musicAssignments.value = { ...musicAssignments.value, [identifier]: groupId };
+}
+
+function dropDraggingTrackToRemoved() {
+  const identifier = draggingTrack.value;
+  draggingTrack.value = null;
+  const item = musicTracks.value.find((track) => track.id === identifier);
+  if (item) removeMusicTrack(item);
+}
+
+function exportMusicReview() {
+  const data: MusicReviewState = {
+    labels: musicLabels.value,
+    customGroups: customMusicGroups.value,
+    deletedGroups: deletedMusicGroups.value,
+    assignments: musicAssignments.value,
+    removed: removedMusicTracks.value,
+  };
+  saveAs(
+    new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' }),
+    'music-catalog-review.json',
+  );
+}
+
+function resetMusicReview() {
+  musicLabels.value = {};
+  customMusicGroups.value = [];
+  deletedMusicGroups.value = {};
+  musicAssignments.value = {};
+  removedMusicTracks.value = {};
+  materializeMusicLabels();
+}
+
+function restoreMusicReview() {
+  try {
+    const saved = localStorage.getItem(MUSIC_REVIEW_STORAGE_KEY);
+    if (!saved) return;
+    const state = JSON.parse(saved) as Partial<MusicReviewState>;
+    const knownTracks = new Set(musicTracks.value.map((track) => track.id));
+    if (Array.isArray(state.customGroups)) {
+      state.customGroups.forEach((id) => {
+        if (typeof id === 'string' && /^_custom_\d+$/.test(id) && !customMusicGroups.value.includes(id)) {
+          customMusicGroups.value.push(id);
+        }
+      });
+    }
+    if (state.labels && typeof state.labels === 'object') {
+      Object.entries(state.labels).forEach(([id, label]) => {
+        if (typeof label === 'string') {
+          musicLabels.value[id] = label;
+        }
+      });
+    }
+    materializeMusicLabels();
+    const derivedIds = new Set(musicTracks.value.map((track) => musicGroupId(track.name)));
+    customMusicGroups.value.forEach((id) => derivedIds.delete(id));
+    if (state.deletedGroups && typeof state.deletedGroups === 'object') {
+      Object.keys(state.deletedGroups).forEach((id) => {
+        if (derivedIds.has(id)) deletedMusicGroups.value[id] = '';
+      });
+    }
+    const knownTargets = new Set([
+      UNGROUPED_MUSIC_GROUP,
+      ...customMusicGroups.value,
+      ...Array.from(derivedIds),
+    ]);
+    if (state.assignments && typeof state.assignments === 'object') {
+      Object.entries(state.assignments).forEach(([identifier, target]) => {
+        if (knownTracks.has(identifier) && typeof target === 'string' && knownTargets.has(target)) {
+          musicAssignments.value[identifier] = target;
+        }
+      });
+    }
+    if (state.removed && typeof state.removed === 'object') {
+      Object.keys(state.removed).forEach((identifier) => {
+        if (knownTracks.has(identifier)) removedMusicTracks.value[identifier] = '';
+      });
+    }
+  } catch {
+    localStorage.removeItem(MUSIC_REVIEW_STORAGE_KEY);
+  }
+}
+
+watch([musicLabels, customMusicGroups, deletedMusicGroups, musicAssignments, removedMusicTracks], () => {
+  const state: MusicReviewState = {
+    labels: musicLabels.value,
+    customGroups: customMusicGroups.value,
+    deletedGroups: deletedMusicGroups.value,
+    assignments: musicAssignments.value,
+    removed: removedMusicTracks.value,
+  };
+  localStorage.setItem(MUSIC_REVIEW_STORAGE_KEY, JSON.stringify(state));
+}, { deep: true });
+
+materializeMusicLabels();
+
 const backgroundRatios = ref<Record<string, string>>({});
+const expandedBackgroundGroups = ref<string[]>(['city']);
 const expandedMusicGroups = ref<string[]>([]);
 const playingTrack = ref('');
 let unsubscribeAudioPreview = () => {};
@@ -156,6 +429,120 @@ function rememberBackgroundRatio(item: BackgroundPreset, event: Event) {
   const ratio = `${image.naturalWidth} / ${image.naturalHeight}`;
   if (backgroundRatios.value[item.url] !== ratio) backgroundRatios.value[item.url] = ratio;
 }
+
+function backgroundGroupExpanded(group: BackgroundGroup) {
+  return expandedBackgroundGroups.value.includes(group.id)
+    || group.backgrounds.some((item) => item.url === props.background);
+}
+
+function toggleBackgroundGroup(group: BackgroundGroup) {
+  if (backgroundGroupExpanded(group)) {
+    expandedBackgroundGroups.value = expandedBackgroundGroups.value.filter((id) => id !== group.id);
+    return;
+  }
+  expandedBackgroundGroups.value = [...expandedBackgroundGroups.value, group.id];
+}
+
+function startBackgroundDrag(item: BackgroundPreset) {
+  draggingBackground.value = item.name;
+}
+
+function finishBackgroundDrag() {
+  draggingBackground.value = null;
+}
+
+function moveBackgroundToGroup(category: string) {
+  const identifier = draggingBackground.value;
+  if (identifier === null || !knownBackgroundCategory(category)) return;
+  categoryByBackground.value = { ...categoryByBackground.value, [identifier]: category };
+  const remainingRemoved = { ...removedBackgrounds.value };
+  delete remainingRemoved[identifier];
+  removedBackgrounds.value = remainingRemoved;
+  draggingBackground.value = null;
+}
+
+function removeBackground(item: BackgroundPreset) {
+  if (backgroundRemoved(item)) return;
+  removedBackgrounds.value = {
+    ...removedBackgrounds.value,
+    [item.name]: backgroundCategory(item),
+  };
+  if (props.background === item.url) emit('update:background', '');
+}
+
+function moveDraggingToRemoved() {
+  const identifier = draggingBackground.value;
+  const item = backgrounds.value.find((background) => background.name === identifier);
+  if (item) removeBackground(item);
+  draggingBackground.value = null;
+}
+
+function restoreBackground(item: BackgroundPreset) {
+  const category = removedBackgrounds.value[item.name] ?? backgroundCategory(item);
+  categoryByBackground.value = { ...categoryByBackground.value, [item.name]: category };
+  const remainingRemoved = { ...removedBackgrounds.value };
+  delete remainingRemoved[item.name];
+  removedBackgrounds.value = remainingRemoved;
+}
+
+function exportBackgroundReview() {
+  const data = {
+    categories: categoryByBackground.value,
+    labels: categoryLabels.value,
+    removed: Object.keys(removedBackgrounds.value),
+  };
+  saveAs(
+    new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' }),
+    'background-category-review.json',
+  );
+}
+
+function resetBackgroundReview() {
+  categoryByBackground.value = { ...DEFAULT_BACKGROUND_CATEGORIES };
+  categoryLabels.value = { ...BACKGROUND_CATEGORY_LABELS };
+  removedBackgrounds.value = defaultBackgroundRemovals();
+}
+
+function restoreBackgroundReview() {
+  try {
+    const saved = localStorage.getItem(BACKGROUND_REVIEW_STORAGE_KEY);
+    if (!saved) return;
+    const state = JSON.parse(saved) as Partial<BackgroundReviewState>;
+    const knownBackgrounds = new Set(backgrounds.value.map((item) => item.name));
+    if (state.categories && typeof state.categories === 'object') {
+      Object.entries(state.categories).forEach(([identifier, category]) => {
+        if (knownBackgrounds.has(identifier) && knownBackgroundCategory(category)) {
+          categoryByBackground.value[identifier] = category;
+        }
+      });
+    }
+    if (state.labels && typeof state.labels === 'object') {
+      Object.entries(state.labels).forEach(([category, label]) => {
+        if (knownBackgroundCategory(category) && typeof label === 'string') {
+          categoryLabels.value[category] = label;
+        }
+      });
+    }
+    if (state.removed && typeof state.removed === 'object') {
+      Object.entries(state.removed).forEach(([identifier, category]) => {
+        if (knownBackgrounds.has(identifier) && knownBackgroundCategory(category)) {
+          removedBackgrounds.value[identifier] = category;
+        }
+      });
+    }
+  } catch {
+    localStorage.removeItem(BACKGROUND_REVIEW_STORAGE_KEY);
+  }
+}
+
+watch([categoryByBackground, categoryLabels, removedBackgrounds], () => {
+  const state: BackgroundReviewState = {
+    categories: categoryByBackground.value,
+    labels: categoryLabels.value,
+    removed: removedBackgrounds.value,
+  };
+  localStorage.setItem(BACKGROUND_REVIEW_STORAGE_KEY, JSON.stringify(state));
+}, { deep: true });
 
 function stopMusicPreview() {
   stopAudioPreview();
@@ -188,6 +575,8 @@ function selectMusic(track: MusicPreset) {
 }
 
 onMounted(() => {
+  restoreBackgroundReview();
+  restoreMusicReview();
   unsubscribeAudioPreview = subscribeAudioPreview((value) => {
     playingTrack.value = value.playing && !value.loop ? value.key : '';
   });
@@ -200,43 +589,128 @@ onUnmounted(() => {
 
 <template>
   <main class="scene-page">
-    <div class="scene-selection-grid">
+    <div class="scene-selection-grid" :class="{ reviewing: reviewingBackgrounds || reviewingMusic }">
       <section class="asset-pane background-pane" aria-label="背景图片">
         <div class="asset-pane-heading">
           <div>
-            <div class="section-heading">背景图片</div>
-            <div class="section-description">点击图片选择背景</div>
+            <div class="section-heading">{{ reviewingBackgrounds ? '背景分类审核' : '背景图片' }}</div>
+            <div class="section-description">{{ reviewingBackgrounds ? ' ' : '点击图片选择背景' }}</div>
           </div>
-          <span class="asset-count">{{ backgrounds.length }}</span>
+          <n-space align="center" :size="4">
+            <template v-if="reviewingBackgrounds">
+              <n-tooltip>
+                <template #trigger>
+                  <n-button circle quaternary aria-label="导出审核结果" title="导出审核结果"
+                    @click="exportBackgroundReview"
+                  >
+                    <n-icon size="19"><download-outlined /></n-icon>
+                  </n-button>
+                </template>
+                导出审核结果
+              </n-tooltip>
+              <n-popconfirm positive-text="重置" negative-text="取消"
+                @positive-click="resetBackgroundReview"
+              >
+                <template #trigger>
+                  <n-button circle quaternary aria-label="重置审核结果" title="重置审核结果">
+                    <n-icon size="19"><restart-alt-outlined /></n-icon>
+                  </n-button>
+                </template>
+                重置全部审核修改？
+              </n-popconfirm>
+            </template>
+            <span class="asset-count">{{ backgrounds.length }}</span>
+            <n-button :type="reviewingBackgrounds ? 'primary' : 'default'"
+              @click="reviewingBackgrounds = !reviewingBackgrounds"
+            >
+              {{ reviewingBackgrounds ? '完成审核' : '审核分类' }}
+            </n-button>
+          </n-space>
         </div>
-        <div class="background-library">
-          <section class="background-column" aria-label="通用背景">
-            <div class="background-column-heading">
-              <span>通用</span>
-              <span>{{ commonBackgrounds.length }}</span>
+        <div v-if="reviewingBackgrounds" class="background-review-board">
+          <section v-for="group in reviewBackgroundGroups" :key="group.id" class="review-category"
+            :class="{ 'is-drop-target': draggingBackground !== null }"
+            @dragover.prevent
+            @drop="moveBackgroundToGroup(group.id)"
+          >
+            <div class="review-category-heading">
+              <input v-model="categoryLabels[group.id]" :aria-label="`分类名称：${group.label}`" />
+              <span>{{ group.backgrounds.length }}</span>
             </div>
-            <div class="background-grid">
-              <button v-for="item in commonBackgrounds" :key="item.url" type="button"
-                class="background-choice"
-                :class="{ selected: background === item.url }"
-                :aria-pressed="background === item.url"
-                :style="{ aspectRatio: backgroundRatios[item.url] ?? '1 / 1' }"
+            <div class="review-background-grid">
+              <article v-for="item in group.backgrounds" :key="item.url" class="review-background"
+                draggable="true"
+                @dragstart="startBackgroundDrag(item)"
+                @dragend="finishBackgroundDrag"
                 @click="emit('update:background', item.url)"
               >
                 <img :src="item.url" :alt="item.name" loading="lazy"
                   @load="rememberBackgroundRatio(item, $event)"
                 />
                 <span>{{ item.name }}</span>
-              </button>
+                <n-tooltip>
+                  <template #trigger>
+                    <n-button circle quaternary class="review-item-action"
+                      :aria-label="`移除 ${item.name}`"
+                      :title="`移除 ${item.name}`" @click.stop="removeBackground(item)"
+                    >
+                      <n-icon size="17"><delete-outlined /></n-icon>
+                    </n-button>
+                  </template>
+                  移除
+                </n-tooltip>
+              </article>
             </div>
           </section>
-          <section class="background-column" aria-label="CG 背景">
-            <div class="background-column-heading">
-              <span>CG</span>
-              <span>{{ cgBackgrounds.length }}</span>
+
+          <section class="review-category review-removed"
+            :class="{ 'is-drop-target': draggingBackground !== null }"
+            @dragover.prevent
+            @drop="moveDraggingToRemoved"
+          >
+            <div class="review-category-heading">
+              <span>已移除</span>
+              <span>{{ removedBackgroundItems.length }}</span>
             </div>
-            <div class="background-grid">
-              <button v-for="item in cgBackgrounds" :key="item.url" type="button"
+            <div class="review-background-grid">
+              <article v-for="item in removedBackgroundItems" :key="item.url"
+                class="review-background"
+                draggable="true"
+                @dragstart="startBackgroundDrag(item)"
+                @dragend="finishBackgroundDrag"
+              >
+                <img :src="item.url" :alt="item.name" loading="lazy" />
+                <span>{{ item.name }}</span>
+                <n-tooltip>
+                  <template #trigger>
+                    <n-button circle quaternary class="review-item-action"
+                      :aria-label="`恢复 ${item.name}`"
+                      :title="`恢复 ${item.name}`" @click.stop="restoreBackground(item)"
+                    >
+                      <n-icon size="17"><restore-from-trash-outlined /></n-icon>
+                    </n-button>
+                  </template>
+                  恢复
+                </n-tooltip>
+              </article>
+            </div>
+          </section>
+        </div>
+        <div v-else class="background-library">
+          <section v-for="group in backgroundGroups" :key="group.id" class="background-group">
+            <button type="button" class="background-group-toggle"
+              :aria-expanded="backgroundGroupExpanded(group)"
+              @click="toggleBackgroundGroup(group)"
+            >
+              <n-icon size="18">
+                <arrow-drop-down-filled v-if="backgroundGroupExpanded(group)" />
+                <arrow-right-filled v-else />
+              </n-icon>
+              <span class="background-group-name">{{ group.label }}</span>
+              <span class="background-group-count">{{ group.backgrounds.length }}</span>
+            </button>
+            <div v-if="backgroundGroupExpanded(group)" class="background-grid">
+              <button v-for="item in group.backgrounds" :key="item.url" type="button"
                 class="background-choice"
                 :class="{ selected: background === item.url }"
                 :aria-pressed="background === item.url"
@@ -253,15 +727,149 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="asset-pane music-pane" aria-label="背景音乐">
+      <section v-if="!reviewingBackgrounds || reviewingMusic" class="asset-pane music-pane"
+        :aria-label="reviewingMusic ? '音乐目录审核' : '背景音乐'"
+      >
         <div class="asset-pane-heading">
           <div>
-            <div class="section-heading">背景音乐</div>
-            <div class="section-description">选择曲目，或试听任意音频</div>
+            <div class="section-heading">{{ reviewingMusic ? '音乐目录审核' : '背景音乐' }}</div>
+            <div class="section-description">
+              {{ reviewingMusic
+                ? '新建、删除或重命名条目；拖动音频在条目之间移动'
+                : '选择曲目，或试听任意音频' }}
+            </div>
           </div>
-          <span class="asset-count">{{ musicTracks.length }}</span>
+          <n-space align="center" :size="4">
+            <template v-if="reviewingMusic">
+              <n-tooltip>
+                <template #trigger>
+                  <n-button circle quaternary aria-label="新建条目" title="新建条目"
+                    @click="createMusicGroup"
+                  >
+                    <n-icon size="19"><playlist-add-outlined /></n-icon>
+                  </n-button>
+                </template>
+                新建条目
+              </n-tooltip>
+              <n-tooltip>
+                <template #trigger>
+                  <n-button circle quaternary aria-label="导出审核结果" title="导出审核结果"
+                    @click="exportMusicReview"
+                  >
+                    <n-icon size="19"><download-outlined /></n-icon>
+                  </n-button>
+                </template>
+                导出审核结果
+              </n-tooltip>
+              <n-popconfirm positive-text="重置" negative-text="取消"
+                @positive-click="resetMusicReview"
+              >
+                <template #trigger>
+                  <n-button circle quaternary aria-label="重置审核结果" title="重置审核结果">
+                    <n-icon size="19"><restart-alt-outlined /></n-icon>
+                  </n-button>
+                </template>
+                重置全部条目修改？移动、移除的音频都会回到默认分组。
+              </n-popconfirm>
+            </template>
+            <span class="asset-count">{{ reviewingMusic ? musicTracks.length : activeMusicTracks.length }}</span>
+            <n-button :type="reviewingMusic ? 'primary' : 'default'"
+              @click="reviewingMusic = !reviewingMusic"
+            >
+              {{ reviewingMusic ? '完成审核' : '审核条目' }}
+            </n-button>
+          </n-space>
         </div>
-        <div class="music-list">
+        <div v-if="reviewingMusic" class="music-review-board">
+          <section v-for="group in reviewMusicGroups" :key="group.id" class="review-category"
+            :class="{ 'is-drop-target': draggingTrack !== null }"
+            @dragover.prevent
+            @drop="dropTrackToGroup(group.id)"
+          >
+            <div class="review-category-heading music-review-heading">
+              <input v-model="musicLabels[group.id]" :aria-label="`条目名称：${group.label}`" />
+              <span>{{ group.tracks.length }}</span>
+              <n-popconfirm v-if="group.id !== UNGROUPED_MUSIC_GROUP" positive-text="删除"
+                negative-text="取消" @positive-click="deleteMusicGroup(group)"
+              >
+                <template #trigger>
+                  <n-button circle quaternary size="tiny" class="review-group-action"
+                    :aria-label="`删除条目 ${group.label}`" :title="`删除条目 ${group.label}`"
+                  >
+                    <n-icon size="15"><delete-outlined /></n-icon>
+                  </n-button>
+                </template>
+                删除条目「{{ group.label }}」？其中的音频会移入“未分组”。
+              </n-popconfirm>
+            </div>
+            <div class="review-track-list">
+              <div v-for="track in group.tracks" :key="track.id" class="review-track-row"
+                draggable="true"
+                @dragstart="startTrackDrag(track)"
+                @dragend="finishTrackDrag"
+              >
+                <n-button circle quaternary size="tiny"
+                  :type="playingTrack === track.id ? 'primary' : 'default'"
+                  :title="playingTrack === track.id ? '暂停试听' : '试听'"
+                  :aria-label="playingTrack === track.id ? '暂停试听' : `试听 ${track.name}`"
+                  @click.stop="toggleMusicPreview(track)"
+                >
+                  <n-icon size="15">
+                    <pause-filled v-if="playingTrack === track.id" />
+                    <play-arrow-filled v-else />
+                  </n-icon>
+                </n-button>
+                <span class="review-track-name" :title="track.name">{{ track.name }}</span>
+                <n-button circle quaternary size="tiny" class="review-track-remove"
+                  :aria-label="`移除 ${track.name}`" :title="`移除 ${track.name}`"
+                  @click.stop="removeMusicTrack(track)"
+                >
+                  <n-icon size="14"><delete-outlined /></n-icon>
+                </n-button>
+              </div>
+              <div v-if="group.tracks.length === 0" class="review-track-empty">拖动音频到这里</div>
+            </div>
+          </section>
+
+          <section class="review-category review-removed"
+            :class="{ 'is-drop-target': draggingTrack !== null }"
+            @dragover.prevent
+            @drop="dropDraggingTrackToRemoved"
+          >
+            <div class="review-category-heading music-review-heading">
+              <span>已移除</span>
+              <span>{{ removedMusicItems.length }}</span>
+            </div>
+            <div class="review-track-list">
+              <div v-for="track in removedMusicItems" :key="track.id" class="review-track-row"
+                draggable="true"
+                @dragstart="startTrackDrag(track)"
+                @dragend="finishTrackDrag"
+              >
+                <n-button circle quaternary size="tiny"
+                  :type="playingTrack === track.id ? 'primary' : 'default'"
+                  :title="playingTrack === track.id ? '暂停试听' : '试听'"
+                  :aria-label="playingTrack === track.id ? '暂停试听' : `试听 ${track.name}`"
+                  @click.stop="toggleMusicPreview(track)"
+                >
+                  <n-icon size="15">
+                    <pause-filled v-if="playingTrack === track.id" />
+                    <play-arrow-filled v-else />
+                  </n-icon>
+                </n-button>
+                <span class="review-track-name" :title="track.name">{{ track.name }}</span>
+                <n-button circle quaternary size="tiny" class="review-track-remove"
+                  :aria-label="`恢复 ${track.name}`" :title="`恢复 ${track.name}`"
+                  @click.stop="restoreMusicTrack(track)"
+                >
+                  <n-icon size="14"><restore-from-trash-outlined /></n-icon>
+                </n-button>
+              </div>
+              <div v-if="removedMusicItems.length === 0" class="review-track-empty">没有已移除的音频</div>
+            </div>
+          </section>
+        </div>
+        <div v-else class="music-list">
           <section v-for="group in musicGroups" :key="group.id" class="music-group">
             <button type="button" class="music-group-toggle"
               :aria-expanded="musicGroupExpanded(group)"
@@ -339,6 +947,10 @@ onUnmounted(() => {
   gap: 20px;
 }
 
+.scene-selection-grid.reviewing {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .asset-pane {
   min-width: 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -374,43 +986,221 @@ onUnmounted(() => {
 }
 
 .background-library {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  min-width: 0;
-}
-
-.background-column {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.background-review-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: start;
+  gap: 12px;
+  padding: 16px;
+}
+
+.review-category {
+  min-width: 0;
   overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: #111115;
 }
 
-.background-column + .background-column {
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+.review-category.is-drop-target {
+  border-color: rgba(99, 226, 183, 0.56);
 }
 
-.background-column-heading {
-  display: flex;
+.review-category-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  color: rgba(255, 255, 255, 0.82);
-  font-size: 13px;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.46);
+  font-size: 12px;
 }
 
-.background-column-heading > span:last-child {
-  color: rgba(255, 255, 255, 0.45);
+.review-category-heading input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.review-category-heading input:focus {
+  color: #63e2b7;
+}
+
+.review-background-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.review-background {
+  position: relative;
+  min-width: 0;
+  min-height: 78px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: #08080a;
+  color: #ffffff;
+  cursor: grab;
+}
+
+.review-background:hover {
+  border-color: rgba(255, 255, 255, 0.65);
+}
+
+.review-background:active {
+  cursor: grabbing;
+}
+
+.review-background img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 78px;
+  object-fit: cover;
+}
+
+.review-background > span {
+  position: absolute;
+  right: 5px;
+  bottom: 4px;
+  left: 5px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px #000000;
+  white-space: nowrap;
+}
+
+.review-item-action {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 1;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.review-removed {
+  border-style: dashed;
+}
+
+.music-review-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(236px, 1fr));
+  align-items: start;
+  gap: 12px;
+  padding: 16px;
+}
+
+.music-review-heading {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.review-track-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.review-track-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  border-radius: 3px;
+  cursor: grab;
+}
+
+.review-track-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.review-track-row:active {
+  cursor: grabbing;
+}
+
+.review-track-name {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 17px;
+  color: rgba(255, 255, 255, 0.86);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-track-empty {
+  padding: 14px 8px;
+  color: rgba(255, 255, 255, 0.36);
+  font-size: 12px;
+  text-align: center;
+}
+
+.background-group + .background-group {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.background-group-toggle {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  cursor: pointer;
+  text-align: left;
+}
+
+.background-group-toggle:hover,
+.background-group-toggle:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
+.background-group-name {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-group-count {
+  padding-left: 12px;
+  color: rgba(255, 255, 255, 0.46);
+  font-size: 12px;
 }
 
 .background-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   align-content: start;
-  align-items: flex-start;
   gap: 10px;
-  height: min(56vh, 580px);
+  max-height: min(56vh, 580px);
   min-width: 0;
   overflow-y: auto;
   padding: 0 16px 16px;
@@ -419,7 +1209,6 @@ onUnmounted(() => {
 .background-choice {
   display: block;
   box-sizing: border-box;
-  flex: 0 0 calc((100% - 10px) / 2);
   position: relative;
   min-width: 0;
   overflow: hidden;
@@ -603,19 +1392,20 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 
+  .background-review-board {
+    grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+    padding: 12px;
+  }
+
+  .music-review-board {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    padding: 12px;
+  }
+
   .background-grid,
   .music-list {
     height: 480px;
     max-height: none;
-  }
-
-  .background-library {
-    grid-template-columns: 1fr;
-  }
-
-  .background-column + .background-column {
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    border-left: 0;
   }
 
   .scene-actions {

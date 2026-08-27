@@ -14,6 +14,11 @@ export interface TextLine extends LineType {
   text: string;
   narratorColor: string;
   sprites: string[];
+  /**
+   * The speaking sprite path, e.g. `UMP45/0`. Falls back to the sprite whose
+   * character name matches `narrator` when unset.
+   */
+  speaker?: string;
 }
 
 export interface SceneLine extends LineType {

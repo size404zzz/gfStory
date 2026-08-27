@@ -10,6 +10,7 @@ const props = defineProps<{
   center: number,
   container: HTMLDivElement,
   framed?: boolean,
+  shadowed?: boolean,
 }>();
 const url = computed(() => `url(${props.sprite.image.src})`);
 
@@ -80,7 +81,7 @@ watch(() => props.framed, updateImageProperties);
 </script>
 
 <template>
-  <div class="sprite" :class="sprite.effects ?? []"
+  <div class="sprite" :class="[sprite.effects ?? [], { shadowed }]"
     :style="{ left: `${center}px` }"
   >
     <div class="sprite-frame"
@@ -107,9 +108,14 @@ watch(() => props.framed, updateImageProperties);
 </template>
 
 <style>
-.sprite.sprite-enter-from, .sprite.sprite-leave-to {
+/* 旧立绘向左平移淡出，新立绘从右向左平移淡入，运动范围 100px。 */
+.sprite.sprite-enter-from {
   opacity: 0;
-  transform: translateX(calc(-50% - 20px));
+  transform: translateX(calc(-50% + 100px));
+}
+.sprite.sprite-leave-to {
+  opacity: 0;
+  transform: translateX(calc(-50% - 100px));
 }
 .sprite {
   transition: all 0.2s ease;
@@ -117,6 +123,9 @@ watch(() => props.framed, updateImageProperties);
   overflow: visible;
   position: absolute;
   user-select: none;
+}
+.sprite .sprite-frame img {
+  transition: filter 0.25s ease;
 }
 .sprite .sprite-frame {
   position: absolute;
@@ -164,6 +173,11 @@ watch(() => props.framed, updateImageProperties);
 .sprite.stealth {
   opacity: 0.5;
   filter: drop-shadow(0 0 5px cyan) blur(2px);
+}
+
+/* 非说话人立绘的暗影模板。 */
+.sprite.shadowed .sprite-frame img {
+  filter: brightness(0.4) saturate(0.85);
 }
 
 @supports (mask-type: luminance) {

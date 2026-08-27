@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { SelectLine } from '@brocatel/mdc';
 import {
-  nextTick, onMounted, ref, watch,
+  computed, nextTick, onMounted, ref, watch,
 } from 'vue';
 
 import AnimatedText from './AnimatedText.vue';
@@ -33,12 +33,24 @@ const props = defineProps<{
   textHeight?: string,
   popCharAnimationInterval?: number,
 
+  /** The sprite id of the speaking character; other sprites get a shadow. */
+  speaker?: string,
+
   loading?: boolean,
 
   history?: HistoryLine[];
 }>();
 const textBox = ref<HTMLDivElement>();
 const textAnimating = ref(false);
+
+const shadowedSprites = computed(() => {
+  if (!props.speaker || props.sprites.length < 2) {
+    return new Set<string>();
+  }
+  return new Set(
+    props.sprites.filter((sprite) => sprite.id !== props.speaker).map((sprite) => sprite.id),
+  );
+});
 
 // eslint-disable-next-line no-spaced-func
 const emit = defineEmits<{
@@ -131,6 +143,7 @@ watch(() => props.history, (history) => {
           :center="computeCenter(i)"
           :container="backgroundSpace!"
           :framed="remote.has(sprite.id)"
+          :shadowed="shadowedSprites.has(sprite.id)"
           :key="sprite.id"
         >
         </sprite-image-view>

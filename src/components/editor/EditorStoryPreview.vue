@@ -80,6 +80,14 @@ const textHtml = computed(() => props.line?.text || '<p>在这里预览对白</p
 const remote = computed(() => new Set(Object.entries(props.line?.remote ?? {})
   .filter(([, enabled]) => enabled)
   .map(([path]) => path)));
+// 说话人立绘：显式标记优先，否则取角色名与说话人一致的立绘。
+const speaker = computed(() => {
+  const line = props.line;
+  if (!line) return '';
+  if (line.speaker) return line.speaker;
+  if (!line.narrator) return '';
+  return props.sprites.find((path) => path.split('/')[0] === line.narrator) ?? '';
+});
 
 function stopMusic() {
   stopAudioPreview();
@@ -117,6 +125,7 @@ onUnmounted(() => {
       :narrator-html="narratorHtml"
       :sprites="previewSprites"
       :remote="remote"
+      :speaker="speaker"
       :text-html="textHtml"
       :options="[]"
     >

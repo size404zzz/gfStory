@@ -36,6 +36,12 @@ const narratorColor = ref('');
 const narratorHtml = computed(() => `<span style="color: ${narratorColor.value}">${narrator.value}</span>`);
 const sprites = ref<SpriteImage[]>([]);
 const remote = ref<Set<string>>(new Set<string>());
+// 说话的立绘：名称与旁白一致的台上角色；其余立绘在渲染时套暗影模板。
+const speaker = computed(() => {
+  if (narrator.value === '') return '';
+  const match = sprites.value.find((sprite) => sprite.id.split('/')[0] === narrator.value);
+  return match?.id ?? '';
+});
 const text = ref('');
 const ended = ref(false);
 const auto = ref(false);
@@ -220,6 +226,7 @@ onUnmounted(() => {
     :narrator-html="narratorHtml"
     :sprites="sprites"
     :remote="remote"
+    :speaker="speaker"
     :text-html="text"
     :pop-char-animation-interval="auto ? 42 / autoSpeed : 42"
     :options="options"
