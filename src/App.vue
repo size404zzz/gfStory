@@ -105,7 +105,8 @@ function returnToStart() {
           <scene-setup v-if="step === 'scene'" v-model:background="background" v-model:music="music"
             @back="returnToStart" @continue="finishSceneSetup"
           />
-          <dialogue-composer v-else :modelValue="story" @update:modelValue="updateStory"
+          <dialogue-composer v-else :modelValue="story" :background="background" :music="music"
+            @update:modelValue="updateStory"
             @scene-settings="step = 'scene'"
           />
         </div>
