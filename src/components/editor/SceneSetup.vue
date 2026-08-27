@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  PauseFilled, PlayArrowFilled,
+  ArrowDropDownFilled, ArrowRightFilled, PauseFilled, PlayArrowFilled,
 } from '@vicons/material';
 import {
   NButton, NIcon, NSpace, NTooltip,
@@ -29,6 +29,12 @@ type MusicPreset = {
   id: string,
   name: string,
   url: string,
+};
+
+type MusicGroup = {
+  id: string,
+  label: string,
+  tracks: MusicPreset[],
 };
 
 defineProps<{
@@ -110,7 +116,37 @@ const musicTracks = computed<MusicPreset[]>(() => Object.entries(
   url: `${AUDIO_PATH_PREFIX}${path}`,
 })).sort((left, right) => left.name.localeCompare(right.name)));
 
+function musicGroupId(name: string) {
+  if (/^\d+$/.test(name)) return 'number';
+  const delimitedPrefix = /^([A-Za-z0-9]+)[_-]/.exec(name)?.[1];
+  if (delimitedPrefix) return delimitedPrefix.toUpperCase();
+  const alphabeticPrefix = /^[A-Za-z]+/.exec(name)?.[0];
+  return alphabeticPrefix?.toUpperCase() ?? 'other';
+}
+
+function musicGroupLabel(id: string) {
+  if (id === 'number') return '数字编号';
+  if (id === 'other') return '其他';
+  return id;
+}
+
+const musicGroups = computed<MusicGroup[]>(() => {
+  const groups = new Map<string, MusicPreset[]>();
+  musicTracks.value.forEach((track) => {
+    const id = musicGroupId(track.name);
+    const tracks = groups.get(id) ?? [];
+    tracks.push(track);
+    groups.set(id, tracks);
+  });
+  return Array.from(groups, ([id, tracks]) => ({
+    id,
+    label: musicGroupLabel(id),
+    tracks,
+  })).sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
+});
+
 const backgroundRatios = ref<Record<string, string>>({});
+const expandedMusicGroups = ref<string[]>([]);
 const playingTrack = ref('');
 let unsubscribeAudioPreview = () => {};
 
@@ -123,6 +159,19 @@ function rememberBackgroundRatio(item: BackgroundPreset, event: Event) {
 
 function stopMusicPreview() {
   stopAudioPreview();
+}
+
+function musicGroupExpanded(group: MusicGroup) {
+  return expandedMusicGroups.value.includes(group.id);
+}
+
+function toggleMusicGroup(group: MusicGroup) {
+  if (musicGroupExpanded(group)) {
+    expandedMusicGroups.value = expandedMusicGroups.value.filter((id) => id !== group.id);
+    if (group.tracks.some((track) => track.id === playingTrack.value)) stopMusicPreview();
+    return;
+  }
+  expandedMusicGroups.value = [...expandedMusicGroups.value, group.id];
 }
 
 function toggleMusicPreview(track: MusicPreset) {
@@ -213,31 +262,46 @@ onUnmounted(() => {
           <span class="asset-count">{{ musicTracks.length }}</span>
         </div>
         <div class="music-list">
-          <div v-for="track in musicTracks" :key="track.id" class="music-row"
-            :class="{ selected: music === track.url }"
-          >
-            <button type="button" class="music-select" :aria-pressed="music === track.url"
-              @click="selectMusic(track)"
+          <section v-for="group in musicGroups" :key="group.id" class="music-group">
+            <button type="button" class="music-group-toggle"
+              :aria-expanded="musicGroupExpanded(group)"
+              @click="toggleMusicGroup(group)"
             >
-              <span>{{ track.name }}</span>
+              <n-icon size="18">
+                <arrow-drop-down-filled v-if="musicGroupExpanded(group)" />
+                <arrow-right-filled v-else />
+              </n-icon>
+              <span class="music-group-name">{{ group.label }}</span>
+              <span class="music-group-count">{{ group.tracks.length }}</span>
             </button>
-            <n-tooltip>
-              <template #trigger>
-                <n-button circle quaternary
-                  :type="playingTrack === track.id ? 'primary' : 'default'"
-                  :title="playingTrack === track.id ? '暂停试听' : '试听'"
-                  :aria-label="playingTrack === track.id ? '暂停试听' : `试听 ${track.name}`"
-                  @click="toggleMusicPreview(track)"
+            <div v-if="musicGroupExpanded(group)" class="music-group-tracks">
+              <div v-for="track in group.tracks" :key="track.id" class="music-row"
+                :class="{ selected: music === track.url }"
+              >
+                <button type="button" class="music-select" :aria-pressed="music === track.url"
+                  @click="selectMusic(track)"
                 >
-                  <n-icon size="19">
-                    <pause-filled v-if="playingTrack === track.id" />
-                    <play-arrow-filled v-else />
-                  </n-icon>
-                </n-button>
-              </template>
-              {{ playingTrack === track.id ? '暂停试听' : '试听' }}
-            </n-tooltip>
-          </div>
+                  <span>{{ track.name }}</span>
+                </button>
+                <n-tooltip>
+                  <template #trigger>
+                    <n-button circle quaternary
+                      :type="playingTrack === track.id ? 'primary' : 'default'"
+                      :title="playingTrack === track.id ? '暂停试听' : '试听'"
+                      :aria-label="playingTrack === track.id ? '暂停试听' : `试听 ${track.name}`"
+                      @click="toggleMusicPreview(track)"
+                    >
+                      <n-icon size="19">
+                        <pause-filled v-if="playingTrack === track.id" />
+                        <play-arrow-filled v-else />
+                      </n-icon>
+                    </n-button>
+                  </template>
+                  {{ playingTrack === track.id ? '暂停试听' : '试听' }}
+                </n-tooltip>
+              </div>
+            </div>
+          </section>
         </div>
       </section>
     </div>
@@ -411,12 +475,57 @@ onUnmounted(() => {
 }
 
 .music-list {
-  display: grid;
-  align-content: start;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   max-height: min(56vh, 580px);
   overflow-y: auto;
   padding: 10px;
+}
+
+.music-group {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.music-group-toggle {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.88);
+  cursor: pointer;
+  text-align: left;
+}
+
+.music-group-toggle:hover,
+.music-group-toggle:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.music-group-name {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-group-count {
+  padding-left: 12px;
+  color: rgba(255, 255, 255, 0.46);
+  font-size: 12px;
+}
+
+.music-group-tracks {
+  padding: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
 }
 
 .music-row {
