@@ -26,6 +26,7 @@ type BackgroundPreset = {
 };
 
 type MusicPreset = {
+  id: string,
   name: string,
   url: string,
 };
@@ -104,6 +105,7 @@ const cgBackgrounds = computed(() => backgrounds.value
 const musicTracks = computed<MusicPreset[]>(() => Object.entries(
   audioPresets as AudioInfo,
 ).map(([name, path]) => ({
+  id: name,
   name,
   url: `${AUDIO_PATH_PREFIX}${path}`,
 })).sort((left, right) => left.name.localeCompare(right.name)));
@@ -124,11 +126,11 @@ function stopMusicPreview() {
 }
 
 function toggleMusicPreview(track: MusicPreset) {
-  if (playingTrack.value === track.url) {
+  if (playingTrack.value === track.id) {
     stopMusicPreview();
     return;
   }
-  playAudioPreview(track.url);
+  playAudioPreview(track.url, false, track.id);
 }
 
 function selectMusic(track: MusicPreset) {
@@ -138,7 +140,7 @@ function selectMusic(track: MusicPreset) {
 
 onMounted(() => {
   unsubscribeAudioPreview = subscribeAudioPreview((value) => {
-    playingTrack.value = value.playing && !value.loop ? value.source : '';
+    playingTrack.value = value.playing && !value.loop ? value.key : '';
   });
 });
 onUnmounted(() => {
@@ -211,7 +213,7 @@ onUnmounted(() => {
           <span class="asset-count">{{ musicTracks.length }}</span>
         </div>
         <div class="music-list">
-          <div v-for="track in musicTracks" :key="track.url" class="music-row"
+          <div v-for="track in musicTracks" :key="track.id" class="music-row"
             :class="{ selected: music === track.url }"
           >
             <button type="button" class="music-select" :aria-pressed="music === track.url"
@@ -222,18 +224,18 @@ onUnmounted(() => {
             <n-tooltip>
               <template #trigger>
                 <n-button circle quaternary
-                  :type="playingTrack === track.url ? 'primary' : 'default'"
-                  :title="playingTrack === track.url ? '暂停试听' : '试听'"
-                  :aria-label="playingTrack === track.url ? '暂停试听' : `试听 ${track.name}`"
+                  :type="playingTrack === track.id ? 'primary' : 'default'"
+                  :title="playingTrack === track.id ? '暂停试听' : '试听'"
+                  :aria-label="playingTrack === track.id ? '暂停试听' : `试听 ${track.name}`"
                   @click="toggleMusicPreview(track)"
                 >
                   <n-icon size="19">
-                    <pause-filled v-if="playingTrack === track.url" />
+                    <pause-filled v-if="playingTrack === track.id" />
                     <play-arrow-filled v-else />
                   </n-icon>
                 </n-button>
               </template>
-              {{ playingTrack === track.url ? '暂停试听' : '试听' }}
+              {{ playingTrack === track.id ? '暂停试听' : '试听' }}
             </n-tooltip>
           </div>
         </div>

@@ -1,11 +1,13 @@
 export type AudioPreviewState = {
   source: string,
+  key: string,
   loop: boolean,
   playing: boolean,
 };
 
 const stoppedState: AudioPreviewState = {
   source: '',
+  key: '',
   loop: false,
   playing: false,
 };
@@ -38,7 +40,7 @@ export function stopAudioPreview() {
   notify();
 }
 
-export async function playAudioPreview(source: string, loop = false) {
+export async function playAudioPreview(source: string, loop = false, key = source) {
   stopAudioPreview();
   const audio = new Audio(source);
   audio.preload = 'none';
@@ -46,7 +48,9 @@ export async function playAudioPreview(source: string, loop = false) {
   const currentPlaybackId = playbackId;
 
   audio.loop = loop;
-  state = { source, loop, playing: true };
+  state = {
+    source, key, loop, playing: true,
+  };
   notify();
 
   audio.onended = () => {

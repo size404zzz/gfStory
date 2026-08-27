@@ -43,19 +43,28 @@ afterEach(() => {
 
 describe('audio preview', () => {
   test('stops and releases the previous preview before playing another', async () => {
-    const states: string[] = [];
-    const unsubscribe = subscribeAudioPreview((value) => states.push(value.source));
+    const states: Array<{ source: string, key: string }> = [];
+    const unsubscribe = subscribeAudioPreview((value) => states.push({
+      source: value.source,
+      key: value.key,
+    }));
 
-    await playAudioPreview('/audio/first.m4a');
-    await playAudioPreview('/audio/second.m4a');
+    await playAudioPreview('/audio/shared.m4a', false, 'first-row');
+    await playAudioPreview('/audio/shared.m4a', false, 'second-row');
 
     const [firstPlayer, secondPlayer] = FakeAudio.instances;
     expect(FakeAudio.instances).toHaveLength(2);
     expect(firstPlayer.pause).toHaveBeenCalledTimes(1);
     expect(firstPlayer.src).toBe('');
-    expect(secondPlayer.src).toBe('/audio/second.m4a');
+    expect(secondPlayer.src).toBe('/audio/shared.m4a');
     expect(secondPlayer.play).toHaveBeenCalledTimes(1);
-    expect(states).toEqual(['', '', '/audio/first.m4a', '', '/audio/second.m4a']);
+    expect(states).toEqual([
+      { source: '', key: '' },
+      { source: '', key: '' },
+      { source: '/audio/shared.m4a', key: 'first-row' },
+      { source: '', key: '' },
+      { source: '/audio/shared.m4a', key: 'second-row' },
+    ]);
     unsubscribe();
   });
 });
