@@ -1,10 +1,10 @@
 name: Build Documentation
 
+# 全量构建较慢（需下载并解包游戏资源）。资源缓存失效或游戏大版本更新时，
+# 在 Actions 页面手动运行本工作流重建缓存；日常提交由
+# Deploy Editor From Cached Resources 直接用缓存发布。
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read

@@ -49,9 +49,14 @@ npx wrangler deploy
 
 ## 发布流程
 
-提交并推送到 `main`，或者在 GitHub 的 `Actions -> Build Documentation -> Run workflow` 手动运行。
+日常发布：提交并推送到 `main`，`Deploy Editor From Cached Resources` 会自动用
+Actions 缓存里的资源完成构建和发布（只装 Node 依赖、跑构建，不解包资源，速度很快）。
 
-工作流会依次完成：
+需要重建资源缓存时（首次部署、游戏资源大版本更新、解包脚本变化），在 GitHub 的
+`Actions -> Build Documentation -> Run workflow` 手动运行全量构建。它会重新下载并
+解包资源、刷新缓存，之后日常推送继续走快速通道。
+
+全量构建工作流会依次完成：
 
 1. 检出两个资源子模块。
 2. 安装 Python、Unity 解包器、ffmpeg、pngquant 和 vgmstream。

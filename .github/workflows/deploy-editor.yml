@@ -2,6 +2,9 @@ name: Deploy Editor From Cached Resources
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
