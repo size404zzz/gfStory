@@ -475,9 +475,11 @@ onUnmounted(() => {
 }
 
 .music-list {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  height: min(56vh, 580px);
   max-height: min(56vh, 580px);
   overflow-y: auto;
   padding: 10px;
