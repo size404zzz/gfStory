@@ -18,10 +18,15 @@ const props = defineProps<{
   line?: TextLine,
 }>();
 
+const emit = defineEmits<{
+  'music-preview-start': [],
+}>();
+
 const previewSprites = ref<SpriteImage[]>([]);
 const playing = ref(false);
 let imageRequest = 0;
 let musicPlayer: HTMLAudioElement | null = null;
+let musicPlaybackId = 0;
 
 function selectedSprite(path: string): [string, CharacterSprite] | null {
   const separator = path.indexOf('/');
@@ -79,9 +84,17 @@ const remote = computed(() => new Set(Object.entries(props.line?.remote ?? {})
   .map(([path]) => path)));
 
 function stopMusic() {
-  musicPlayer?.pause();
+  musicPlaybackId += 1;
+  const player = musicPlayer;
   musicPlayer = null;
   playing.value = false;
+  if (!player) return;
+  player.onended = null;
+  player.onerror = null;
+  player.pause();
+  player.currentTime = 0;
+  player.removeAttribute('src');
+  player.load();
 }
 
 function toggleMusic() {
@@ -91,11 +104,13 @@ function toggleMusic() {
     musicPlayer = new Audio(props.music);
     musicPlayer.loop = true;
   }
-  if (musicPlayer.paused) {
-    musicPlayer.play().then(() => {
-      playing.value = true;
-    }).catch(() => {
-      playing.value = false;
+  const player = musicPlayer;
+  if (player.paused) {
+    const playbackId = musicPlaybackId;
+    playing.value = true;
+    emit('music-preview-start');
+    player.play().catch(() => {
+      if (musicPlayer === player && playbackId === musicPlaybackId) stopMusic();
     });
   } else {
     musicPlayer.pause();
@@ -106,6 +121,7 @@ function toggleMusic() {
 watch(() => [props.characters, props.sprites], refreshSprites, { deep: true, immediate: true });
 watch(() => props.music, stopMusic);
 onUnmounted(stopMusic);
+defineExpose({ stopMusic });
 </script>
 
 <template>

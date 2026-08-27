@@ -27,6 +27,10 @@ type MusicPreset = {
   url: string,
 };
 
+type ScenePreviewController = {
+  stopMusic(): void,
+};
+
 defineProps<{
   background: string,
   music: string,
@@ -106,12 +110,26 @@ const musicTracks = computed<MusicPreset[]>(() => Object.entries(
 })).sort((left, right) => left.name.localeCompare(right.name)));
 
 const playingTrack = ref('');
+const scenePreview = ref<ScenePreviewController | null>(null);
 let audioPreview: HTMLAudioElement | null = null;
+let audioPlaybackId = 0;
 
 function stopMusicPreview() {
-  audioPreview?.pause();
+  audioPlaybackId += 1;
+  const player = audioPreview;
   audioPreview = null;
   playingTrack.value = '';
+  if (!player) return;
+  player.onended = null;
+  player.onerror = null;
+  player.pause();
+  player.currentTime = 0;
+  player.removeAttribute('src');
+  player.load();
+}
+
+function stopScenePreviewMusic() {
+  scenePreview.value?.stopMusic();
 }
 
 function toggleMusicPreview(track: MusicPreset) {
@@ -121,21 +139,25 @@ function toggleMusicPreview(track: MusicPreset) {
     return;
   }
 
+  stopScenePreviewMusic();
   stopMusicPreview();
   const player = new Audio(track.url);
+  const playbackId = audioPlaybackId;
   player.onended = () => {
-    if (audioPreview === player) stopMusicPreview();
+    if (audioPreview === player && playbackId === audioPlaybackId) stopMusicPreview();
+  };
+  player.onerror = () => {
+    if (audioPreview === player && playbackId === audioPlaybackId) stopMusicPreview();
   };
   audioPreview = player;
-  player.play().then(() => {
-    if (audioPreview === player) playingTrack.value = track.url;
-  }).catch(() => {
-    if (audioPreview === player) stopMusicPreview();
+  playingTrack.value = track.url;
+  player.play().catch(() => {
+    if (audioPreview === player && playbackId === audioPlaybackId) stopMusicPreview();
   });
 }
 
 function selectMusic(track: MusicPreset) {
-  if (playingTrack.value !== track.url) stopMusicPreview();
+  stopMusicPreview();
   emit('update:music', track.url);
 }
 
@@ -232,8 +254,9 @@ onUnmounted(stopMusicPreview);
     <section class="scene-footer">
       <div class="scene-preview">
         <div class="section-heading">场景预览</div>
-        <editor-story-preview :background="background" :music="music" :characters="[]"
-          :sprites="[]"
+        <editor-story-preview ref="scenePreview" :background="background" :music="music"
+          :characters="[]" :sprites="[]"
+          @music-preview-start="stopMusicPreview"
         />
       </div>
       <n-space class="scene-actions" justify="end">
