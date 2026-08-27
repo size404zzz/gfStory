@@ -2,10 +2,13 @@
 import { VolumeOffFilled, VolumeUpFilled } from '@vicons/material';
 import { NIcon, NTooltip } from 'naive-ui';
 import {
-  computed, onUnmounted, ref, watch,
+  computed, onMounted, onUnmounted, ref, watch,
 } from 'vue';
 
 import StoryScene from '../viewer/StoryScene.vue';
+import {
+  playAudioPreview, stopAudioPreview, subscribeAudioPreview,
+} from './audioPreview';
 import type { Character, CharacterSprite } from '../../types/character';
 import type { TextLine } from '../../types/lines';
 import type { SpriteImage } from '../../story/interpreter';
@@ -18,15 +21,10 @@ const props = defineProps<{
   line?: TextLine,
 }>();
 
-const emit = defineEmits<{
-  'music-preview-start': [],
-}>();
-
 const previewSprites = ref<SpriteImage[]>([]);
 const playing = ref(false);
 let imageRequest = 0;
-let musicPlayer: HTMLAudioElement | null = null;
-let musicPlaybackId = 0;
+let unsubscribeAudioPreview = () => {};
 
 function selectedSprite(path: string): [string, CharacterSprite] | null {
   const separator = path.indexOf('/');
@@ -84,44 +82,29 @@ const remote = computed(() => new Set(Object.entries(props.line?.remote ?? {})
   .map(([path]) => path)));
 
 function stopMusic() {
-  musicPlaybackId += 1;
-  const player = musicPlayer;
-  musicPlayer = null;
-  playing.value = false;
-  if (!player) return;
-  player.onended = null;
-  player.onerror = null;
-  player.pause();
-  player.currentTime = 0;
-  player.removeAttribute('src');
-  player.load();
+  stopAudioPreview();
 }
 
 function toggleMusic() {
   if (!props.music) return;
-  if (musicPlayer?.src !== new URL(props.music, window.location.href).href) {
+  if (playing.value) {
     stopMusic();
-    musicPlayer = new Audio(props.music);
-    musicPlayer.loop = true;
-  }
-  const player = musicPlayer;
-  if (player.paused) {
-    const playbackId = musicPlaybackId;
-    playing.value = true;
-    emit('music-preview-start');
-    player.play().catch(() => {
-      if (musicPlayer === player && playbackId === musicPlaybackId) stopMusic();
-    });
   } else {
-    musicPlayer.pause();
-    playing.value = false;
+    playAudioPreview(props.music, true);
   }
 }
 
 watch(() => [props.characters, props.sprites], refreshSprites, { deep: true, immediate: true });
 watch(() => props.music, stopMusic);
-onUnmounted(stopMusic);
-defineExpose({ stopMusic });
+onMounted(() => {
+  unsubscribeAudioPreview = subscribeAudioPreview((value) => {
+    playing.value = value.playing && value.loop && value.source === props.music;
+  });
+});
+onUnmounted(() => {
+  unsubscribeAudioPreview();
+  stopMusic();
+});
 </script>
 
 <template>

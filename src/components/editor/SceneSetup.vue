@@ -6,10 +6,13 @@ import {
   NButton, NIcon, NSpace, NTooltip,
 } from 'naive-ui';
 import {
-  computed, onUnmounted, ref,
+  computed, onMounted, onUnmounted, ref,
 } from 'vue';
 
 import EditorStoryPreview from './EditorStoryPreview.vue';
+import {
+  playAudioPreview, stopAudioPreview, subscribeAudioPreview,
+} from './audioPreview';
 import audioPresets from '../../assets/audio.json';
 import backgroundPresets from '../../assets/backgrounds.json';
 import {
@@ -25,10 +28,6 @@ type BackgroundPreset = {
 type MusicPreset = {
   name: string,
   url: string,
-};
-
-type ScenePreviewController = {
-  stopMusic(): void,
 };
 
 defineProps<{
@@ -110,50 +109,18 @@ const musicTracks = computed<MusicPreset[]>(() => Object.entries(
 })).sort((left, right) => left.name.localeCompare(right.name)));
 
 const playingTrack = ref('');
-const scenePreview = ref<ScenePreviewController | null>(null);
-let audioPreview: HTMLAudioElement | null = null;
-let audioPlaybackId = 0;
+let unsubscribeAudioPreview = () => {};
 
 function stopMusicPreview() {
-  audioPlaybackId += 1;
-  const player = audioPreview;
-  audioPreview = null;
-  playingTrack.value = '';
-  if (!player) return;
-  player.onended = null;
-  player.onerror = null;
-  player.pause();
-  player.currentTime = 0;
-  player.removeAttribute('src');
-  player.load();
-}
-
-function stopScenePreviewMusic() {
-  scenePreview.value?.stopMusic();
+  stopAudioPreview();
 }
 
 function toggleMusicPreview(track: MusicPreset) {
-  const trackUrl = new URL(track.url, window.location.href).href;
-  if (audioPreview?.src === trackUrl) {
+  if (playingTrack.value === track.url) {
     stopMusicPreview();
     return;
   }
-
-  stopScenePreviewMusic();
-  stopMusicPreview();
-  const player = new Audio(track.url);
-  const playbackId = audioPlaybackId;
-  player.onended = () => {
-    if (audioPreview === player && playbackId === audioPlaybackId) stopMusicPreview();
-  };
-  player.onerror = () => {
-    if (audioPreview === player && playbackId === audioPlaybackId) stopMusicPreview();
-  };
-  audioPreview = player;
-  playingTrack.value = track.url;
-  player.play().catch(() => {
-    if (audioPreview === player && playbackId === audioPlaybackId) stopMusicPreview();
-  });
+  playAudioPreview(track.url);
 }
 
 function selectMusic(track: MusicPreset) {
@@ -161,7 +128,15 @@ function selectMusic(track: MusicPreset) {
   emit('update:music', track.url);
 }
 
-onUnmounted(stopMusicPreview);
+onMounted(() => {
+  unsubscribeAudioPreview = subscribeAudioPreview((value) => {
+    playingTrack.value = value.playing && !value.loop ? value.source : '';
+  });
+});
+onUnmounted(() => {
+  unsubscribeAudioPreview();
+  stopMusicPreview();
+});
 </script>
 
 <template>
@@ -254,9 +229,8 @@ onUnmounted(stopMusicPreview);
     <section class="scene-footer">
       <div class="scene-preview">
         <div class="section-heading">场景预览</div>
-        <editor-story-preview ref="scenePreview" :background="background" :music="music"
-          :characters="[]" :sprites="[]"
-          @music-preview-start="stopMusicPreview"
+        <editor-story-preview :background="background" :music="music" :characters="[]"
+          :sprites="[]"
         />
       </div>
       <n-space class="scene-actions" justify="end">
@@ -322,13 +296,15 @@ onUnmounted(stopMusicPreview);
 .background-library {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   min-width: 0;
 }
 
 .background-column {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  overflow: hidden;
 }
 
 .background-column + .background-column {
@@ -351,14 +327,18 @@ onUnmounted(stopMusicPreview);
 .background-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  grid-auto-flow: row;
   align-content: start;
   gap: 10px;
-  max-height: min(56vh, 580px);
+  height: min(56vh, 580px);
+  min-width: 0;
   overflow-y: auto;
   padding: 0 16px 16px;
 }
 
 .background-choice {
+  display: block;
+  width: 100%;
   position: relative;
   aspect-ratio: 16 / 9;
   min-width: 0;
@@ -498,7 +478,8 @@ onUnmounted(stopMusicPreview);
 
   .background-grid,
   .music-list {
-    max-height: 480px;
+    height: 480px;
+    max-height: none;
   }
 
   .background-library {
