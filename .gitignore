@@ -37,3 +37,4 @@ public/search
 src/assets/*.json
 !src/assets/background-categories.json
 !src/assets/background-removals.json
+!src/assets/music-catalog-review.json

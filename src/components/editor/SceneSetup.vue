@@ -20,6 +20,7 @@ import audioPresets from '../../assets/audio.json';
 import backgroundCategories from '../../assets/background-categories.json';
 import backgroundRemovals from '../../assets/background-removals.json';
 import backgroundPresets from '../../assets/backgrounds.json';
+import musicCatalogReview from '../../assets/music-catalog-review.json';
 import {
   AUDIO_PATH_PREFIX, IMAGE_PATH_PREFIX, type AudioInfo, type BackgroundInfo,
 } from '../../types/assets';
@@ -45,6 +46,7 @@ type BackgroundReviewState = {
 type MusicPreset = {
   id: string,
   name: string,
+  path: string,
   url: string,
 };
 
@@ -164,6 +166,7 @@ const musicTracks = computed<MusicPreset[]>(() => Object.entries(
 ).map(([name, path]) => ({
   id: name,
   name,
+  path,
   url: `${AUDIO_PATH_PREFIX}${path}`,
 })).sort((left, right) => left.name.localeCompare(right.name)));
 
@@ -187,11 +190,12 @@ function musicGroupLabel(id: string) {
 }
 
 const reviewingMusic = ref(false);
-const musicLabels = ref<Record<string, string>>({});
-const customMusicGroups = ref<string[]>([]);
-const deletedMusicGroups = ref<Record<string, string>>({});
-const musicAssignments = ref<Record<string, string>>({});
-const removedMusicTracks = ref<Record<string, string>>({});
+const DEFAULT_MUSIC_REVIEW = musicCatalogReview as MusicReviewState;
+const musicLabels = ref<Record<string, string>>({ ...DEFAULT_MUSIC_REVIEW.labels });
+const customMusicGroups = ref<string[]>([...DEFAULT_MUSIC_REVIEW.customGroups]);
+const deletedMusicGroups = ref<Record<string, string>>({ ...DEFAULT_MUSIC_REVIEW.deletedGroups });
+const musicAssignments = ref<Record<string, string>>({ ...DEFAULT_MUSIC_REVIEW.assignments });
+const removedMusicTracks = ref<Record<string, string>>({ ...DEFAULT_MUSIC_REVIEW.removed });
 const draggingTrack = ref<string | null>(null);
 let musicGroupCounter = 0;
 
@@ -346,11 +350,11 @@ function exportMusicReview() {
 }
 
 function resetMusicReview() {
-  musicLabels.value = {};
-  customMusicGroups.value = [];
-  deletedMusicGroups.value = {};
-  musicAssignments.value = {};
-  removedMusicTracks.value = {};
+  musicLabels.value = { ...DEFAULT_MUSIC_REVIEW.labels };
+  customMusicGroups.value = [...DEFAULT_MUSIC_REVIEW.customGroups];
+  deletedMusicGroups.value = { ...DEFAULT_MUSIC_REVIEW.deletedGroups };
+  musicAssignments.value = { ...DEFAULT_MUSIC_REVIEW.assignments };
+  removedMusicTracks.value = { ...DEFAULT_MUSIC_REVIEW.removed };
   materializeMusicLabels();
 }
 
@@ -819,7 +823,10 @@ onUnmounted(() => {
                     <play-arrow-filled v-else />
                   </n-icon>
                 </n-button>
-                <span class="review-track-name" :title="track.name">{{ track.name }}</span>
+                <span class="review-track-info" :title="track.path">
+                  <span class="review-track-name">{{ track.name }}</span>
+                  <span class="review-track-path">{{ track.path }}</span>
+                </span>
                 <n-button circle quaternary size="tiny" class="review-track-remove"
                   :aria-label="`移除 ${track.name}`" :title="`移除 ${track.name}`"
                   @click.stop="removeMusicTrack(track)"
@@ -857,7 +864,10 @@ onUnmounted(() => {
                     <play-arrow-filled v-else />
                   </n-icon>
                 </n-button>
-                <span class="review-track-name" :title="track.name">{{ track.name }}</span>
+                <span class="review-track-info" :title="track.path">
+                  <span class="review-track-name">{{ track.name }}</span>
+                  <span class="review-track-path">{{ track.path }}</span>
+                </span>
                 <n-button circle quaternary size="tiny" class="review-track-remove"
                   :aria-label="`恢复 ${track.name}`" :title="`恢复 ${track.name}`"
                   @click.stop="restoreMusicTrack(track)"
@@ -887,9 +897,10 @@ onUnmounted(() => {
                 :class="{ selected: music === track.url }"
               >
                 <button type="button" class="music-select" :aria-pressed="music === track.url"
-                  @click="selectMusic(track)"
+                  :title="track.path" @click="selectMusic(track)"
                 >
-                  <span>{{ track.name }}</span>
+                  <span class="music-name">{{ track.name }}</span>
+                  <span class="music-path">{{ track.path }}</span>
                 </button>
                 <n-tooltip>
                   <template #trigger>
@@ -1141,13 +1152,29 @@ onUnmounted(() => {
   cursor: grabbing;
 }
 
-.review-track-name {
+.review-track-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.review-track-name,
+.review-track-path {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-track-name {
   font-size: 12px;
   line-height: 17px;
   color: rgba(255, 255, 255, 0.86);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.review-track-path {
+  font-size: 10px;
+  line-height: 14px;
+  color: rgba(255, 255, 255, 0.42);
 }
 
 .review-track-empty {
@@ -1340,7 +1367,7 @@ onUnmounted(() => {
 
 .music-select {
   min-width: 0;
-  padding: 10px 8px 10px 10px;
+  padding: 6px 8px 6px 10px;
   border: 0;
   background: transparent;
   color: rgba(255, 255, 255, 0.87);
@@ -1353,13 +1380,23 @@ onUnmounted(() => {
   outline-offset: -1px;
 }
 
-.music-select span {
+.music-select .music-name,
+.music-select .music-path {
   display: block;
   overflow: hidden;
-  font-size: 13px;
-  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.music-select .music-name {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.music-select .music-path {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  line-height: 15px;
 }
 
 .scene-footer {
