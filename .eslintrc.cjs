@@ -22,5 +22,7 @@ module.exports = {
   ignorePatterns: [
     'vite.config.ts',
     '.eslintrc.cjs',
+    // Node CLI 生成器不属于 tsconfig.app.json，交给 @typescript-eslint 解析会直接报解析错误
+    'scripts/*.mjs',
   ],
 };

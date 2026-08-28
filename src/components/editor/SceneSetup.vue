@@ -17,6 +17,7 @@ import {
   playAudioPreview, stopAudioPreview, subscribeAudioPreview,
 } from './audioPreview';
 import audioPresets from '../../assets/audio.json';
+import audioCategories from '../../assets/audio-categories.json';
 import backgroundCategories from '../../assets/background-categories.json';
 import backgroundRemovals from '../../assets/background-removals.json';
 import backgroundPresets from '../../assets/backgrounds.json';
@@ -44,16 +45,24 @@ type BackgroundReviewState = {
 };
 
 type MusicPreset = {
+  /** 文件路径，去重后的唯一键；同一文件的多个音频标识符继承它的分类。 */
   id: string,
   name: string,
   path: string,
   url: string,
+  aliasCount: number,
 };
 
 type MusicGroup = {
   id: string,
   label: string,
   tracks: MusicPreset[],
+};
+
+type AudioCategories = {
+  categories: Record<string, string>,
+  series: Record<string, string>,
+  labels: Record<string, string>,
 };
 
 type MusicReviewState = {
@@ -102,7 +111,15 @@ function defaultBackgroundRemovals() {
 }
 
 const UNGROUPED_MUSIC_GROUP = '_ungrouped';
-const MUSIC_REVIEW_STORAGE_KEY = 'gfstory.music-catalog-review.v1';
+/**
+ * v2：审校覆盖层的键从音频标识符换成物理文件路径。restore 是无条件叠加，
+ * 沿用 v1 会让浏览器里的旧状态继续遮蔽新的默认分类。
+ */
+const MUSIC_REVIEW_STORAGE_KEY = 'gfstory.music-catalog-review.v2';
+const MUSIC_GROUP_SEPARATOR = '/';
+const COMMON_MUSIC_SERIES = 'common';
+const CUSTOM_MUSIC_GROUP_PREFIX = '_custom_';
+const CUSTOM_MUSIC_GROUP_PATTERN = /^_custom_\d+$/;
 
 const backgrounds = computed<BackgroundPreset[]>(() => Object.entries(
   backgroundPresets as BackgroundInfo,
@@ -161,16 +178,39 @@ const reviewBackgroundGroups = computed<BackgroundGroup[]>(() => {
 
 const removedBackgroundItems = computed(() => backgrounds.value.filter(backgroundRemoved));
 
-const musicTracks = computed<MusicPreset[]>(() => Object.entries(
-  audioPresets as AudioInfo,
-).map(([name, path]) => ({
-  id: name,
-  name,
-  path,
-  url: `${AUDIO_PATH_PREFIX}${path}`,
-})).sort((left, right) => left.name.localeCompare(right.name)));
+const AUDIO_CATEGORIES = audioCategories as AudioCategories;
+const MUSIC_CATEGORY_ORDER = Object.keys(AUDIO_CATEGORIES.labels);
 
-function musicGroupId(name: string) {
+/** 解包脚本按 `;` 拆别名会产出 `x.m4a.m4a`，扩展名要循环剥干净。 */
+function displayStem(audioPath: string) {
+  let stem = audioPath.split('/').pop() ?? audioPath;
+  while (/\.m4a$/i.test(stem)) stem = stem.slice(0, -4);
+  return stem;
+}
+
+/** 一个文件常对应多个 audiotemplate 逻辑名，列表里合并展示。 */
+function aliasSuffix(track: MusicPreset) {
+  return track.aliasCount > 1 ? ` · ${track.aliasCount} 个标识符` : '';
+}
+
+const musicTracks = computed<MusicPreset[]>(() => {
+  const aliasesByPath = new Map<string, string[]>();
+  Object.entries(audioPresets as AudioInfo).forEach(([identifier, audioPath]) => {
+    const aliases = aliasesByPath.get(audioPath) ?? [];
+    aliases.push(identifier);
+    aliasesByPath.set(audioPath, aliases);
+  });
+  return Array.from(aliasesByPath, ([audioPath, aliases]) => ({
+    id: audioPath,
+    name: displayStem(audioPath),
+    path: audioPath,
+    url: `${AUDIO_PATH_PREFIX}${audioPath}`,
+    aliasCount: aliases.length,
+  })).sort((left, right) => left.name.localeCompare(right.name));
+});
+
+/** 生成器还没覆盖到的资源退回名称前缀启发，保证不会出现空组。 */
+function fallbackMusicGroupId(name: string) {
   if (/^\d+$/.test(name)) return 'number';
   const delimitedPrefix = /^([A-Za-z0-9]+)[_-]/.exec(name)?.[1];
   if (delimitedPrefix) return delimitedPrefix.toUpperCase();
@@ -178,11 +218,26 @@ function musicGroupId(name: string) {
   return alphabeticPrefix?.toUpperCase() ?? 'other';
 }
 
+function derivedMusicGroupId(track: MusicPreset) {
+  const category = AUDIO_CATEGORIES.categories[track.path];
+  if (category === undefined) return fallbackMusicGroupId(track.name);
+  const series = AUDIO_CATEGORIES.series[track.path] ?? COMMON_MUSIC_SERIES;
+  return series === COMMON_MUSIC_SERIES ? category : `${category}${MUSIC_GROUP_SEPARATOR}${series}`;
+}
+
+function musicCategoryOf(groupId: string) {
+  return groupId.split(MUSIC_GROUP_SEPARATOR)[0];
+}
+
 function defaultMusicGroupLabel(id: string) {
   if (id === UNGROUPED_MUSIC_GROUP) return '未分组';
+  if (id.startsWith(CUSTOM_MUSIC_GROUP_PREFIX)) return '新条目';
   if (id === 'number') return '数字编号';
-  if (id === 'other') return '其他';
-  return id;
+  const separator = id.indexOf(MUSIC_GROUP_SEPARATOR);
+  const category = separator === -1 ? id : id.slice(0, separator);
+  const label = AUDIO_CATEGORIES.labels[category] ?? category;
+  if (separator === -1) return label;
+  return `${label} · ${id.slice(separator + 1)}`;
 }
 
 function musicGroupLabel(id: string) {
@@ -209,21 +264,14 @@ function trackGroupId(track: MusicPreset) {
     return override;
   }
   if (override === UNGROUPED_MUSIC_GROUP) return override;
-  const derived = musicGroupId(track.name);
+  const derived = derivedMusicGroupId(track);
   return deletedMusicGroups.value[derived] !== undefined ? UNGROUPED_MUSIC_GROUP : derived;
 }
 
 function materializeMusicLabels() {
-  musicTracks.value.forEach((track) => {
-    const id = musicGroupId(track.name);
-    if (!(id in musicLabels.value)) musicLabels.value[id] = defaultMusicGroupLabel(id);
-  });
   customMusicGroups.value.forEach((id) => {
     if (!(id in musicLabels.value)) musicLabels.value[id] = '新条目';
   });
-  if (!(UNGROUPED_MUSIC_GROUP in musicLabels.value)) {
-    musicLabels.value[UNGROUPED_MUSIC_GROUP] = defaultMusicGroupLabel(UNGROUPED_MUSIC_GROUP);
-  }
 }
 
 const activeMusicTracks = computed(() => musicTracks.value.filter((track) => !trackRemoved(track)));
@@ -241,8 +289,28 @@ function buildMusicBuckets() {
   return buckets;
 }
 
+/** 未识别分类（退回名称启发）、用户自建条目与“未分组”排在生成分类之后。 */
+function musicGroupRank(groupId: string) {
+  if (groupId === UNGROUPED_MUSIC_GROUP) return 3;
+  if (groupId.startsWith(CUSTOM_MUSIC_GROUP_PREFIX)) return 2;
+  return MUSIC_CATEGORY_ORDER.includes(musicCategoryOf(groupId)) ? 0 : 1;
+}
+
+function isCommonMusicGroup(groupId: string) {
+  return !groupId.includes(MUSIC_GROUP_SEPARATOR);
+}
+
 function sortMusicGroups(groups: MusicGroup[]) {
-  return groups.sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
+  return groups.sort((left, right) => {
+    const rank = musicGroupRank(left.id) - musicGroupRank(right.id);
+    if (rank !== 0) return rank;
+    const categoryDiff = MUSIC_CATEGORY_ORDER.indexOf(musicCategoryOf(left.id))
+      - MUSIC_CATEGORY_ORDER.indexOf(musicCategoryOf(right.id));
+    if (categoryDiff !== 0) return categoryDiff;
+    const commonDiff = Number(isCommonMusicGroup(left.id)) - Number(isCommonMusicGroup(right.id));
+    if (commonDiff !== 0) return commonDiff;
+    return right.tracks.length - left.tracks.length || left.id.localeCompare(right.id);
+  });
 }
 
 const musicGroups = computed<MusicGroup[]>(() => sortMusicGroups(Array.from(
@@ -268,9 +336,9 @@ function createMusicGroup() {
   let id = '';
   do {
     musicGroupCounter += 1;
-    id = `_custom_${musicGroupCounter}`;
+    id = `${CUSTOM_MUSIC_GROUP_PREFIX}${musicGroupCounter}`;
   } while (customMusicGroups.value.includes(id));
-  const existingLabels = new Set(Object.values(musicLabels.value));
+  const existingLabels = new Set(reviewMusicGroups.value.map((group) => group.label));
   let suffix = 0;
   while (existingLabels.has(`新条目${suffix ? ` ${suffix}` : ''}`)) suffix += 1;
   customMusicGroups.value = [...customMusicGroups.value, id];
@@ -366,9 +434,9 @@ function restoreMusicReview() {
     const knownTracks = new Set(musicTracks.value.map((track) => track.id));
     if (Array.isArray(state.customGroups)) {
       state.customGroups.forEach((id) => {
-        if (typeof id === 'string' && /^_custom_\d+$/.test(id) && !customMusicGroups.value.includes(id)) {
-          customMusicGroups.value.push(id);
-        }
+        const isNew = typeof id === 'string' && CUSTOM_MUSIC_GROUP_PATTERN.test(id)
+          && !customMusicGroups.value.includes(id);
+        if (isNew) customMusicGroups.value.push(id);
       });
     }
     if (state.labels && typeof state.labels === 'object') {
@@ -379,7 +447,7 @@ function restoreMusicReview() {
       });
     }
     materializeMusicLabels();
-    const derivedIds = new Set(musicTracks.value.map((track) => musicGroupId(track.name)));
+    const derivedIds = new Set(musicTracks.value.map((track) => derivedMusicGroupId(track)));
     customMusicGroups.value.forEach((id) => derivedIds.delete(id));
     if (state.deletedGroups && typeof state.deletedGroups === 'object') {
       Object.keys(state.deletedGroups).forEach((id) => {
@@ -791,7 +859,9 @@ onUnmounted(() => {
             @drop="dropTrackToGroup(group.id)"
           >
             <div class="review-category-heading music-review-heading">
-              <input v-model="musicLabels[group.id]" :aria-label="`条目名称：${group.label}`" />
+              <input v-model="musicLabels[group.id]" :aria-label="`条目名称：${group.label}`"
+                :placeholder="defaultMusicGroupLabel(group.id)"
+              />
               <span>{{ group.tracks.length }}</span>
               <n-popconfirm v-if="group.id !== UNGROUPED_MUSIC_GROUP" positive-text="删除"
                 negative-text="取消" @positive-click="deleteMusicGroup(group)"
@@ -825,7 +895,7 @@ onUnmounted(() => {
                 </n-button>
                 <span class="review-track-info" :title="track.path">
                   <span class="review-track-name">{{ track.name }}</span>
-                  <span class="review-track-path">{{ track.path }}</span>
+                  <span class="review-track-path">{{ track.path }}{{ aliasSuffix(track) }}</span>
                 </span>
                 <n-button circle quaternary size="tiny" class="review-track-remove"
                   :aria-label="`移除 ${track.name}`" :title="`移除 ${track.name}`"
@@ -866,7 +936,7 @@ onUnmounted(() => {
                 </n-button>
                 <span class="review-track-info" :title="track.path">
                   <span class="review-track-name">{{ track.name }}</span>
-                  <span class="review-track-path">{{ track.path }}</span>
+                  <span class="review-track-path">{{ track.path }}{{ aliasSuffix(track) }}</span>
                 </span>
                 <n-button circle quaternary size="tiny" class="review-track-remove"
                   :aria-label="`恢复 ${track.name}`" :title="`恢复 ${track.name}`"
@@ -900,7 +970,7 @@ onUnmounted(() => {
                   :title="track.path" @click="selectMusic(track)"
                 >
                   <span class="music-name">{{ track.name }}</span>
-                  <span class="music-path">{{ track.path }}</span>
+                  <span class="music-path">{{ track.path }}{{ aliasSuffix(track) }}</span>
                 </button>
                 <n-tooltip>
                   <template #trigger>

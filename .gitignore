@@ -35,6 +35,7 @@ public/images
 public/stories
 public/search
 src/assets/*.json
+!src/assets/audio-categories.json
 !src/assets/background-categories.json
 !src/assets/background-removals.json
 !src/assets/music-catalog-review.json

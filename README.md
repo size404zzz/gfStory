@@ -41,6 +41,17 @@
 
 `pnpm dev` 命令会自动把 `viewer.html` 的入口打包成单个 HTML 文件，以便用于整体打包剧情。
 
+### 音频分类
+
+编辑器里的音频默认按「大类 / 系列」分组，这份映射是 `src/assets/audio-categories.json`，由 `scripts/classify-audio.mjs`
+读取 `src/assets/audio.json` 生成并随仓库提交。换了一批解包资源或改了分类规则，就重新跑一次：
+
+```bash
+pnpm classify-audio --report   # --report 会打印各大类文件数、分组规模与未能识别的明细
+```
+
+规则没覆盖到的音频会退回按名称前缀分组，不会消失；审核面板里的改动只写入 `music-catalog-review.json` 那份覆盖层。
+
 ### 网页构架
 
 框架用的是 Vue，目前有三个入口点：
