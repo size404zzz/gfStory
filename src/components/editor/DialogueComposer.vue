@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import {
-  NButton, NColorPicker, NEmpty, NIcon, NInput, NSelect,
-  type SelectOption,
+  NButton, NCascader, NColorPicker, NEmpty, NIcon, NInput, NSpace,
+  type CascaderOption,
 } from 'naive-ui';
 import { AddFilled, DeleteFilled } from '@vicons/material';
-import { computed, ref, watch } from 'vue';
+import {
+  computed, h, ref, watch,
+} from 'vue';
 
 import EditorStoryPreview from './EditorStoryPreview.vue';
+import MediaItem from '../media/MediaItem.vue';
 import ClassicEditor from '../lines/editor';
 import {
   defaultLine, type GfStory, type Line, type TextLine,
@@ -43,25 +46,55 @@ watch(dialogueLines, (lines) => {
   }
 }, { immediate: true });
 
-const spriteOptions = computed<SelectOption[]>(() => {
-  const options = new Map<string, SelectOption>();
+/** 立绘名多为数字编号，按自然序排列才能保持 0、1、2……的顺序。 */
+function compareNames(left: string, right: string) {
+  return left.localeCompare(right, undefined, { numeric: true });
+}
+
+type SpriteChoice = CascaderOption & { url: string };
+
+/** 角色 → 立绘两级分类；节点 value 仍是 `角色/立绘`，与 line.sprites 的格式一致。 */
+const spriteChoices = computed<CascaderOption[]>(() => {
+  const spritesByCharacter = new Map<string, Map<string, string>>();
+  const remember = (character: string, sprite: string, url: string) => {
+    let sprites = spritesByCharacter.get(character);
+    if (!sprites) {
+      sprites = new Map<string, string>();
+      spritesByCharacter.set(character, sprites);
+    }
+    if (!sprites.has(sprite)) sprites.set(sprite, url);
+  };
   props.modelValue.characters.forEach((character) => {
     character.sprites.forEach((sprite) => {
-      const path = `${character.name}/${sprite.name}`;
-      options.set(path, { label: `${character.name} / ${sprite.name}`, value: path });
+      remember(character.name, sprite.name, sprite.url);
     });
   });
   Object.entries(characterPresets).forEach(([character, sprites]) => {
     Object.keys(sprites).forEach((sprite) => {
-      const path = `${character}/${sprite}`;
-      if (!options.has(path)) {
-        options.set(path, { label: `${character} / ${sprite}`, value: path });
-      }
+      remember(character, sprite, `${IMAGE_PATH_PREFIX}${sprites[sprite].path}`);
     });
   });
-  return [...options.values()]
-    .sort((left, right) => String(left.label).localeCompare(String(right.label)));
+  return [...spritesByCharacter].map(([character, sprites]) => {
+    const children = [...sprites].map(([sprite, url]) => ({
+      label: sprite,
+      value: `${character}/${sprite}`,
+      url,
+    } satisfies SpriteChoice)).sort((left, right) => compareNames(left.label, right.label));
+    return {
+      label: character,
+      value: character,
+      url: children[0].url,
+      children,
+    } satisfies SpriteChoice;
+  }).sort((left, right) => compareNames(left.label, right.label));
 });
+
+function renderSpriteChoice(option: CascaderOption) {
+  const { label, url } = option as SpriteChoice;
+  return h(NSpace, { align: 'center', size: 8, noWrap: true }, {
+    default: () => [h(MediaItem, { url }), label],
+  });
+}
 
 function updateLines(lines: Line[], characters = props.modelValue.characters) {
   emit('update:modelValue', { characters, lines });
@@ -105,8 +138,6 @@ function mergeCharacters(paths: string[]) {
 
 function updateLineSprites(id: string, paths: string[]) {
   const sprites = [...new Set(paths)];
-  // 选中后收起下拉，避免菜单遮挡下方的说话人标记。
-  spriteSelectShown.value = { ...spriteSelectShown.value, [id]: false };
   updateLines(
     props.modelValue.lines.map((line) => (
       line.type === 'text' && line.id === id
@@ -199,8 +230,9 @@ function removeDialogue(id: string) {
             </n-button>
           </div>
           <div class="sprite-line">
-            <n-select class="dialogue-sprites" :value="line.sprites" :options="spriteOptions"
-              multiple filterable clearable
+            <n-cascader class="dialogue-sprites" :value="line.sprites" :options="spriteChoices"
+              :render-label="renderSpriteChoice" :clear-filter-after-select="false"
+              multiple check-strategy="child" expand-trigger="hover" filterable clearable
               placeholder="选择云端立绘（可搜索角色 / 立绘名称）"
               :show="spriteSelectShown[line.id] ?? false"
               @update:show="(value) => updateSpriteSelectShown(line.id, value)"
