@@ -27,7 +27,8 @@ export interface Media extends RawMedia {
  */
 export type MediaUrl = string;
 
-function isMediaUrl(s: MediaUrl) {
+/** True when the url points at IndexedDB media and must be resolved by `toDataUrl`. */
+export function isMediaUrl(s: MediaUrl) {
   return !s.startsWith('/') && s.includes(':') && !s.toLowerCase().startsWith('http');
 }
 

@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import {
-  NButton, NCascader, NColorPicker, NEmpty, NIcon, NInput, NSpace,
+  NButton, NCascader, NColorPicker, NEmpty, NIcon, NInput,
   type CascaderOption,
 } from 'naive-ui';
 import { AddFilled, DeleteFilled } from '@vicons/material';
 import {
-  computed, h, ref, watch,
+  computed, ref, watch,
 } from 'vue';
 
 import EditorStoryPreview from './EditorStoryPreview.vue';
-import MediaItem from '../media/MediaItem.vue';
 import ClassicEditor from '../lines/editor';
+import { renderSpriteChoiceRow } from '../character/spriteChoiceRow';
 import {
   defaultLine, type GfStory, type Line, type TextLine,
 } from '../../types/lines';
@@ -51,7 +51,7 @@ function compareNames(left: string, right: string) {
   return left.localeCompare(right, undefined, { numeric: true });
 }
 
-type SpriteChoice = CascaderOption & { url: string };
+type SpriteChoice = CascaderOption & { url: string, label: string };
 
 /** 角色 → 立绘两级分类；节点 value 仍是 `角色/立绘`，与 line.sprites 的格式一致。 */
 const spriteChoices = computed<CascaderOption[]>(() => {
@@ -90,9 +90,11 @@ const spriteChoices = computed<CascaderOption[]>(() => {
 });
 
 function renderSpriteChoice(option: CascaderOption) {
-  const { label, url } = option as SpriteChoice;
-  return h(NSpace, { align: 'center', size: 8, noWrap: true }, {
-    default: () => [h(MediaItem, { url }), label],
+  const { children, label, url } = option as SpriteChoice;
+  return renderSpriteChoiceRow({
+    label,
+    url,
+    leaf: !children,
   });
 }
 

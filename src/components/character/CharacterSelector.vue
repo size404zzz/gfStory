@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import {
-  NCascader, NCheckbox, NSpace, type CascaderOption,
+  NCascader, NCheckbox, type CascaderOption,
 } from 'naive-ui';
-import { computed, h } from 'vue';
+import { computed } from 'vue';
 
 import MediaItem from '../media/MediaItem.vue';
+import { renderSpriteChoiceRow } from './spriteChoiceRow';
 import {
   getNamePath, getSprite,
   type Character, type CharacterSprite,
@@ -24,20 +25,15 @@ const id = computed(() => (getSprite(
 
 function renderLabel(o: CascaderOption) {
   const option = o as unknown as Character | CharacterSprite;
-  let sprite: CharacterSprite | undefined;
-  if ((option as CharacterSprite).url) {
-    sprite = option as CharacterSprite;
-  } else {
-    [sprite] = (option as Character).sprites;
-  }
+  const leaf = !!(option as CharacterSprite).url;
+  const sprite = leaf ? option as CharacterSprite : (option as Character).sprites[0];
   if (!sprite) {
     return option.name;
   }
-  return h(NSpace, { align: 'center', noWrap: true }, {
-    default: () => [
-      h(MediaItem, { url: sprite!.url }),
-      option.name,
-    ],
+  return renderSpriteChoiceRow({
+    label: option.name,
+    url: sprite.url,
+    leaf,
   });
 }
 
