@@ -48,6 +48,7 @@ function importStory(value: GfStory) {
 
 function updateStory(value: GfStory) {
   story.value = value;
+  readSceneSettings(value);
 }
 
 function finishSceneSetup() {
@@ -73,7 +74,9 @@ function finishSceneSetup() {
       classes: [],
     });
   }
-  const content = story.value.lines.filter((line) => line.type !== 'scene');
+  // 只重写开头的场景块，剧情中途切换背景、音乐的节点需要保留。
+  const firstContent = story.value.lines.findIndex((line) => line.type !== 'scene');
+  const content = firstContent === -1 ? [] : story.value.lines.slice(firstContent);
   if (!content.some((line) => line.type === 'text')) content.push(defaultLine());
   story.value = { ...story.value, lines: [...scenes, ...content] };
   step.value = 'dialogue';

@@ -18,27 +18,65 @@ export interface ScriptParseStats {
   sceneLines: number;
   optionLines: number;
   characters: number;
+  backgroundLines: number;
+  bgmLines: number;
+  seLines: number;
+  spriteLines: number;
+  speakers: number;
 }
 
 export interface ScriptParseResult {
   story: GfStory;
   warnings: ScriptParseWarning[];
   stats: ScriptParseStats;
+  format: 'script' | 'json';
+}
+
+export function buildStats(
+  sourceLines: number,
+  lines: Line[],
+  characters: number,
+): ScriptParseStats {
+  const sceneLines = lines.filter((line) => line.type === 'scene');
+  const textLines = lines.filter((line) => line.type === 'text');
+  const sceneCount = (scene: SceneLine['scene']) => sceneLines
+    .filter((line) => (line as SceneLine).scene === scene).length;
+  return {
+    sourceLines,
+    generatedLines: lines.length,
+    textLines: textLines.length,
+    sceneLines: sceneLines.length,
+    optionLines: lines.filter((line) => line.type === 'option').length,
+    characters,
+    backgroundLines: sceneCount('background'),
+    bgmLines: sceneCount('audio'),
+    seLines: sceneCount('se'),
+    spriteLines: textLines.filter((line) => (line as TextLine).sprites.length > 0).length,
+    speakers: new Set(textLines
+      .map((line) => (line as TextLine).narrator)
+      .filter((narrator) => narrator !== '')).size,
+  };
 }
 
 export interface ScriptParseOptions {
   /** Resolve an original game asset name to a browser-readable URL. */
-  resolveMedia?: (type: 'background' | 'audio' | 'sprite', name: string) => string;
+  resolveMedia?: (
+    type: 'background' | 'audio' | 'sprite',
+    name: string,
+    audioScene: 'audio' | 'se',
+  ) => string;
+  /** Look up an unpacked sprite to get its real url and scale. */
+  spritePreset?: (name: string, sprite: string) => { url: string, scale: number } | undefined;
 }
 
-interface ParsedNarrator {
+export interface ParsedNarrator {
   speaker: string;
   sprites: string[];
   remote: Record<string, boolean>;
   characters: Array<{ name: string; sprite: string }>;
 }
 
-interface ParsedSourceLine {
+export interface ParsedSourceLine {
   narrator: string;
   sprites: string[];
   remote: Record<string, boolean>;
@@ -55,7 +93,7 @@ function hasExtension(value: string, extensions: string[]) {
   return extensions.some((extension) => value.toLowerCase().endsWith(extension));
 }
 
-function mediaUrl(
+export function mediaUrl(
   type: 'background' | 'audio' | 'sprite',
   name: string,
   options: ScriptParseOptions,
@@ -67,7 +105,7 @@ function mediaUrl(
     return value;
   }
   if (options.resolveMedia) {
-    return options.resolveMedia(type, value);
+    return options.resolveMedia(type, value, audioScene);
   }
   if (type === 'background') {
     const path = value.startsWith('background/') ? value : `background/${value}`;
@@ -106,7 +144,7 @@ function parseTags(source: string) {
   return tags;
 }
 
-function parseNarrators(
+export function parseNarrators(
   source: string,
   warnings: ScriptParseWarning[],
   lineNumber: number,
@@ -175,7 +213,7 @@ function parseSourceLine(
   };
 }
 
-function sanitizeText(source: string) {
+export function sanitizeText(source: string) {
   // Remove control characters before inserting imported content into HTML.
   let text = source
     // eslint-disable-next-line no-control-regex
@@ -202,7 +240,7 @@ function sanitizeText(source: string) {
   return text;
 }
 
-function toTextLine(
+export function toTextLine(
   parsed: ParsedSourceLine,
   text: string,
   id: string,
@@ -218,7 +256,7 @@ function toTextLine(
   };
 }
 
-function toSceneLine(
+export function toSceneLine(
   scene: SceneLine['scene'],
   media: string,
   id: string,
@@ -252,7 +290,7 @@ function classesFromEffects(effects: Record<string, string>) {
   return classes;
 }
 
-function toOptionLine(options: string[], id: string): OptionLine {
+export function toOptionLine(options: string[], id: string): OptionLine {
   return {
     type: 'option',
     id,
@@ -266,11 +304,12 @@ function toOptionLine(options: string[], id: string): OptionLine {
 }
 
 function createCharacter(name: string, sprite: string, options: ScriptParseOptions): Character {
+  const preset = options.spritePreset?.(name, sprite);
   const characterSprite: CharacterSprite = {
     name: sprite,
-    url: mediaUrl('sprite', `${name}/${sprite}.png`, options),
+    url: preset ? preset.url : mediaUrl('sprite', `${name}/${sprite}.png`, options),
     center: [-1, -1],
-    scale: -1,
+    scale: preset ? preset.scale : -1,
     id: `${name}/${sprite}`,
   };
   return {
@@ -281,7 +320,7 @@ function createCharacter(name: string, sprite: string, options: ScriptParseOptio
   };
 }
 
-function mergeCharacter(
+export function mergeCharacter(
   characters: Map<string, Character>,
   name: string,
   sprite: string,
@@ -425,20 +464,17 @@ export function parseScript(script: string, options: ScriptParseOptions = {}): S
   });
   flushOptions();
 
-  const generated = lines.length;
   return {
+    format: 'script',
     story: {
       characters: [...characters.values()],
       lines,
     },
     warnings,
-    stats: {
-      sourceLines: sourceLines.filter((line) => line.trim() !== '').length,
-      generatedLines: generated,
-      textLines: lines.filter((line) => line.type === 'text').length,
-      sceneLines: lines.filter((line) => line.type === 'scene').length,
-      optionLines: lines.filter((line) => line.type === 'option').length,
-      characters: characters.size,
-    },
+    stats: buildStats(
+      sourceLines.filter((line) => line.trim() !== '').length,
+      lines,
+      characters.size,
+    ),
   };
 }

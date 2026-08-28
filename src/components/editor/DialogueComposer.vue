@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  NButton, NCascader, NColorPicker, NEmpty, NIcon, NInput,
+  NButton, NCascader, NColorPicker, NEmpty, NIcon, NInput, NSpace,
   type CascaderOption,
 } from 'naive-ui';
 import { AddFilled, DeleteFilled } from '@vicons/material';
@@ -9,13 +9,16 @@ import {
 } from 'vue';
 
 import EditorStoryPreview from './EditorStoryPreview.vue';
+import ScriptImportModal from '../lines/ScriptImportModal.vue';
 import ClassicEditor from '../lines/editor';
 import { renderSpriteChoiceRow } from '../character/spriteChoiceRow';
 import {
-  defaultLine, type GfStory, type Line, type TextLine,
+  defaultLine, nextId, type GfStory, type Line, type TextLine,
 } from '../../types/lines';
 import { IMAGE_PATH_PREFIX, type GfCharactersInfo } from '../../types/assets';
 import type { Character, CharacterSprite } from '../../types/character';
+import { resolveAssetMedia } from '../../story/assetResolver';
+import type { ScriptParseOptions } from '../../story/scriptParser';
 
 import assetCharacterPresets from '../../assets/characters.json';
 
@@ -106,6 +109,51 @@ function updateDialogue(id: string, patch: Partial<TextLine>) {
   updateLines(props.modelValue.lines.map((line) => (
     line.type === 'text' && line.id === id ? { ...line, ...patch } : line
   )));
+}
+
+const importShown = ref(false);
+
+/** 导入的立绘要用解包索引还原真实地址与缩放，否则预览里取不到图。 */
+const parseOptions: ScriptParseOptions = {
+  resolveMedia: resolveAssetMedia,
+  spritePreset: (name, sprite) => {
+    const preset = characterPresets[name]?.[sprite];
+    return preset
+      ? { url: `${IMAGE_PATH_PREFIX}${preset.path}`, scale: preset.scale }
+      : undefined;
+  },
+};
+
+function mergeImportedCharacters(imported: Character[], base = props.modelValue.characters) {
+  const characters = base.map((character) => ({
+    ...character,
+    sprites: character.sprites.map((sprite) => ({ ...sprite })),
+  }));
+  imported.forEach((character) => {
+    const existing = characters.find((item) => item.name === character.name);
+    if (!existing) {
+      characters.push({
+        ...character,
+        id: '',
+        sprites: character.sprites.map((sprite) => ({ ...sprite, id: '' })),
+      });
+      return;
+    }
+    character.sprites.forEach((sprite) => {
+      if (!existing.sprites.some((item) => item.name === sprite.name)) {
+        existing.sprites.push({ ...sprite, id: '' });
+      }
+    });
+  });
+  return characters;
+}
+
+function applyImport(story: GfStory, mode: 'replace' | 'append') {
+  const lines = story.lines.map((line) => ({ ...line, id: nextId() }));
+  updateLines(
+    mode === 'replace' ? lines : [...props.modelValue.lines, ...lines],
+    mergeImportedCharacters(story.characters, mode === 'replace' ? [] : undefined),
+  );
 }
 
 function mergeCharacters(paths: string[]) {
@@ -203,10 +251,16 @@ function removeDialogue(id: string) {
 
 <template>
   <main class="composer-page">
+    <script-import-modal v-model:show="importShown" :parse-options="parseOptions"
+      @apply="applyImport"
+    />
     <section class="dialogue-panel">
       <div class="panel-heading">
         <div class="section-heading">对白</div>
-        <n-button text type="primary" @click="emit('scene-settings')">背景与音乐</n-button>
+        <n-space align="center" size="large">
+          <n-button text type="info" @click="importShown = true">导入剧本 / JSON</n-button>
+          <n-button text type="primary" @click="emit('scene-settings')">背景与音乐</n-button>
+        </n-space>
       </div>
       <div v-if="dialogueLines.length === 0" class="dialogue-empty">
         <n-empty description="还没有对白">
