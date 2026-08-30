@@ -155,6 +155,14 @@ async function finishRecording(reason: string) {
     phase.value = 'finished';
     return;
   }
+  if (mimeType.includes('mp4')) {
+    // Chrome 126+ / Edge / Safari 直接录出的就是 MP4，无需任何转码，立即导出。
+    const name = recordingFilename();
+    saveAs(blob, name);
+    outcome.value = { file: name, size: blob.size, fallback: false };
+    phase.value = 'finished';
+    return;
+  }
   phase.value = 'processing';
   transcodeStage.value = 'ffmpeg';
   transcodeProgress.value = 0;
@@ -378,9 +386,9 @@ onUnmounted(() => {
           </label>
         </div>
         <p class="recorder-note">
-          需要 Chrome / Edge 浏览器。首次导出会从 CDN 加载约 31MB 的 ffmpeg 内核（下载后缓存），
-          用于把录像转码成 MP4（H.264 + AAC，720p）。转码在浏览器本地单线程进行，十几分钟以上的
-          长录像会明显偏慢。
+          需要 Chrome / Edge / Safari：直接录制 MP4（硬件编码），播完即导出、无需转码。
+          其他浏览器（如 Firefox）会录制 WebM，导出时再在本地转码成 MP4——单线程进行、
+          长录像偏慢，可随时取消并直接导出 WebM。
         </p>
         <p v-if="failure" class="recorder-error">{{ failure }}</p>
         <div class="recorder-actions">

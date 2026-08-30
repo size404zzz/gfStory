@@ -1,5 +1,5 @@
 import {
-  afterEach, describe, expect, test, vi,
+  afterEach, beforeEach, describe, expect, test, vi,
 } from 'vitest';
 
 import {
@@ -84,37 +84,64 @@ describe('pickRecorderMimeType', () => {
 });
 
 describe('startTabRecording', () => {
-  test('码率固定在 1080p 短视频常用档位（8Mbps + 192kbps）', () => {
-    const optionsList: MediaRecorderOptions[] = [];
-    class FakeRecorder {
-      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+  class FakeRecorder {
+    static supported: (mime: string) => boolean = () => false;
 
-      onstop: (() => void) | null = null;
+    static created: FakeRecorder[] = [];
 
-      onerror: (() => void) | null = null;
+    options: MediaRecorderOptions;
 
-      state = 'inactive';
+    startArgs: number | 'no-timeslice' = 'no-timeslice';
 
-      constructor(_stream: MediaStream, options: MediaRecorderOptions) {
-        optionsList.push(options);
-      }
+    ondataavailable: ((event: { data: Blob }) => void) | null = null;
 
-      // eslint-disable-next-line class-methods-use-this
-      start() { /* noop */ }
+    onstop: (() => void) | null = null;
 
-      // eslint-disable-next-line class-methods-use-this
-      stop() { /* noop */ }
+    onerror: (() => void) | null = null;
 
-      static isTypeSupported(mime: string) {
-        return mime.startsWith('video/webm');
-      }
+    state = 'inactive';
+
+    constructor(_stream: MediaStream, options: MediaRecorderOptions) {
+      this.options = options;
+      FakeRecorder.created.push(this);
     }
+
+    start(timeslice?: number) {
+      this.startArgs = timeslice === undefined ? 'no-timeslice' : timeslice;
+    }
+
+    stop() {
+      this.state = 'inactive';
+    }
+
+    static isTypeSupported(mime: string) {
+      return FakeRecorder.supported(mime);
+    }
+  }
+
+  beforeEach(() => {
+    FakeRecorder.created = [];
+  });
+
+  test('码率固定在 1080p 短视频常用档位（8Mbps + 192kbps）', () => {
+    FakeRecorder.supported = (mime) => mime.startsWith('video/webm');
     vi.stubGlobal('MediaRecorder', FakeRecorder);
     startTabRecording({} as MediaStream);
-    expect(optionsList).toHaveLength(1);
-    expect(optionsList[0].mimeType).toBe('video/webm;codecs=vp9,opus');
-    expect(optionsList[0].videoBitsPerSecond).toBe(8000000);
-    expect(optionsList[0].audioBitsPerSecond).toBe(192000);
+    const [recorder] = FakeRecorder.created;
+    expect(recorder.options.mimeType).toBe('video/webm;codecs=vp9,opus');
+    expect(recorder.options.videoBitsPerSecond).toBe(8000000);
+    expect(recorder.options.audioBitsPerSecond).toBe(192000);
+    expect(recorder.startArgs).toBe(1000);
+  });
+
+  test('支持原生 MP4 的浏览器优先直接录 MP4（一次性写入，不分时间片）', () => {
+    FakeRecorder.supported = (mime) => mime.startsWith('video/mp4');
+    vi.stubGlobal('MediaRecorder', FakeRecorder);
+    expect(pickRecorderMimeType()).toBe('video/mp4;codecs=avc1.640028,mp4a.40.2');
+    startTabRecording({} as MediaStream);
+    const [recorder] = FakeRecorder.created;
+    expect(recorder.options.mimeType).toBe('video/mp4;codecs=avc1.640028,mp4a.40.2');
+    expect(recorder.startArgs).toBe('no-timeslice');
   });
 });
 

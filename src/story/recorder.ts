@@ -58,11 +58,16 @@ const CDN_MIRRORS = [
   'https://fastly.jsdelivr.net/npm/',
 ];
 
+// 优先直接录制 MP4（Chrome 126+ / Edge / Safari 原生支持，走系统硬件编码器，
+// 播完即导出、无需任何转码）；Firefox 等不支持的浏览器才退回 WebM 再本地转码。
 const RECORD_MIME_CANDIDATES = [
+  'video/mp4;codecs=avc1.640028,mp4a.40.2',
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+  'video/mp4;codecs=avc1,mp4a.40.2',
+  'video/mp4',
   'video/webm;codecs=vp9,opus',
   'video/webm;codecs=vp8,opus',
   'video/webm',
-  'video/mp4',
 ];
 
 export function pickRecorderMimeType(): string {
@@ -127,7 +132,13 @@ export function startTabRecording(stream: MediaStream): TabRecording {
       chunks.push(event.data);
     }
   };
-  recorder.start(1000);
+  // MP4 容器按时间片吐出的分段不一定能直接拼接，等 stop 时一次性取整段；
+  // WebM 分段天然可拼接，边录边收还能减小内存峰值。
+  if (mimeType.includes('mp4')) {
+    recorder.start();
+  } else {
+    recorder.start(1000);
+  }
   return {
     mimeType,
     stop: () => new Promise<Blob>((resolve, reject) => {
