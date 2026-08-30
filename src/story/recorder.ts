@@ -80,7 +80,9 @@ export async function requestTabCapture(audio: boolean): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getDisplayMedia) {
     throw new Error('当前浏览器不支持画面采集，请使用 Chrome 或 Edge。');
   }
-  // preferCurrentTab / selfBrowserSurface 等 TS 的 DOM 类型里没有，运行时 Chrome 支持。
+  // preferCurrentTab / systemAudio / surfaceSwitching 等 TS 的 DOM 类型里没有，
+  // 运行时 Chrome 支持。注意 preferCurrentTab 与 selfBrowserSurface: 'exclude'
+  // 互斥（Chromium 会抛 Self-contradictory configuration），所以不能加后者。
   const options = {
     video: {
       frameRate: { ideal: 30 },
@@ -91,7 +93,6 @@ export async function requestTabCapture(audio: boolean): Promise<MediaStream> {
       ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
       : false,
     preferCurrentTab: true,
-    selfBrowserSurface: 'exclude',
     systemAudio: 'exclude',
     surfaceSwitching: 'exclude',
   } as unknown as DisplayMediaStreamOptions;
