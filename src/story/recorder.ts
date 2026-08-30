@@ -117,8 +117,9 @@ export function startTabRecording(stream: MediaStream): TabRecording {
   const mimeType = pickRecorderMimeType();
   const recorder = new MediaRecorder(stream, {
     mimeType,
-    videoBitsPerSecond: 8000000,
-    audioBitsPerSecond: 192000,
+    // 剧情画面大多静止，5Mbps 足够清晰；码率越低，转码时占用的内存与解码时间越少。
+    videoBitsPerSecond: 5000000,
+    audioBitsPerSecond: 128000,
   });
   const chunks: Blob[] = [];
   recorder.ondataavailable = (event) => {
@@ -141,17 +142,18 @@ export function startTabRecording(stream: MediaStream): TabRecording {
   };
 }
 
-export function buildMp4Args(input: string, output: string): string[] {
-  // 宽高取偶（x264 只接受偶数尺寸），faststart 方便上传后直接流式播放。
+export function buildMp4Args(input: string, output: string, maxDim = 1280): string[] {
+  // 宽高取偶（x264 只接受偶数尺寸）；宽度压到 maxDim 以内（高度等比、自动取偶），
+  // 单线程 wasm 编码 720p 比 1080p 快一倍以上。faststart 方便上传后直接流式播放。
   return [
     '-i', input,
+    '-vf', `crop=trunc(iw/2)*2:trunc(ih/2)*2,scale=min(${maxDim}\\,iw):-2`,
     '-c:v', 'libx264',
     '-preset', 'veryfast',
-    '-crf', '20',
+    '-crf', '23',
     '-pix_fmt', 'yuv420p',
-    '-vf', 'crop=trunc(iw/2)*2:trunc(ih/2)*2',
     '-c:a', 'aac',
-    '-b:a', '192k',
+    '-b:a', '128k',
     '-movflags', '+faststart',
     output,
   ];
@@ -163,6 +165,7 @@ type FFmpegLike = {
   readFile(name: string): Promise<Uint8Array | string>,
   deleteFile(name: string): Promise<boolean>,
   exec(args: string[]): Promise<number>,
+  terminate(): Promise<void>,
   on(event: 'progress', callback: (data: { progress: number, time: number }) => void): void,
   off(event: 'progress', callback: (data: { progress: number, time: number }) => void): void,
 };
@@ -189,6 +192,63 @@ async function fetchWithMirrors(path: string, index = 0): Promise<{ res: Respons
 async function toBlobURL(path: string, mime: string): Promise<string> {
   const { res } = await fetchWithMirrors(path);
   return URL.createObjectURL(new Blob([await res.arrayBuffer()], { type: mime }));
+}
+
+const CORE_CACHE_NAME = 'gfstory-ffmpeg-core-v1';
+
+function cacheStorage(): CacheStorage | null {
+  return 'caches' in window ? window.caches : null;
+}
+
+/**
+ * 下载大文件（ffmpeg 内核）并转成 blob URL：
+ * - 优先读 Cache API（首次下载后永久缓存，之后离线也能秒开）；
+ * - 边下边通过 onProgress 汇报字节进度（浏览器自身下载大文件很慢且无反馈时，至少让用户看得到动没动）。
+ */
+async function toCachedBlobURL(
+  path: string,
+  mime: string,
+  onProgress?: (received: number, total: number) => void,
+  index = 0,
+): Promise<string> {
+  if (index >= CDN_MIRRORS.length) {
+    throw new Error('所有 CDN 均不可用。');
+  }
+  const url = `${CDN_MIRRORS[index]}${path}`;
+  try {
+    const storage = cacheStorage();
+    const cache = storage ? await storage.open(CORE_CACHE_NAME).catch(() => null) : null;
+    const cached = cache ? await cache.match(url).catch(() => null) : null;
+    if (cached) {
+      const blob = new Blob([await cached.arrayBuffer()], { type: mime });
+      onProgress?.(blob.size, blob.size);
+      return URL.createObjectURL(blob);
+    }
+    const res = await fetch(url);
+    if (!res.ok || !res.body) {
+      return await toCachedBlobURL(path, mime, onProgress, index + 1);
+    }
+    const total = Number(res.headers.get('content-length') ?? 0);
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    const readAll = async (): Promise<Blob> => {
+      const { done, value } = await reader.read();
+      if (done) {
+        return new Blob(chunks, { type: mime });
+      }
+      chunks.push(value);
+      received += value.byteLength;
+      onProgress?.(received, total);
+      return readAll();
+    };
+    const blob = await readAll();
+    if (cache) {
+      await cache.put(url, new Response(blob)).catch(() => {});
+    }
+    return URL.createObjectURL(blob);
+  } catch (_) { /* 尝试下一个镜像 */ }
+  return toCachedBlobURL(path, mime, onProgress, index + 1);
 }
 
 function loadScriptFromMirrors(path: string): Promise<void> {
@@ -223,7 +283,9 @@ async function toWorkerBlobURL(
 
 let ffmpegPromise: Promise<FFmpegLike> | null = null;
 
-async function loadFFmpeg(): Promise<FFmpegLike> {
+async function loadFFmpeg(
+  onDownload?: (received: number, total: number) => void,
+): Promise<FFmpegLike> {
   if (ffmpegPromise) {
     return ffmpegPromise;
   }
@@ -249,9 +311,10 @@ async function loadFFmpeg(): Promise<FFmpegLike> {
         .replace(/from ["']\.\/errors\.js["']/g, `from "${base}${esmFfmpegBase}/errors.js"`),
     );
     // worker 与内核都从 CDN 拿，跨域脚本要用 blob URL 才能起 Worker。
+    // 内核 wasm 有 31MB，走带进度与缓存的下载。
     const [coreURL, wasmURL] = await Promise.all([
       toBlobURL(`${esmCoreBase}/ffmpeg-core.js`, 'text/javascript'),
-      toBlobURL(`${umdCoreBase}/ffmpeg-core.wasm`, 'application/wasm'),
+      toCachedBlobURL(`${umdCoreBase}/ffmpeg-core.wasm`, 'application/wasm', onDownload),
     ]);
     const ffmpeg = new FFmpeg();
     await ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
@@ -265,33 +328,111 @@ async function loadFFmpeg(): Promise<FFmpegLike> {
   }
 }
 
-/** 把录到的 webm 转成 MP4；progress 取值 0 ~ 1。 */
+export type TranscodeCallbacks = {
+  /** 首次加载 ffmpeg 内核时的下载字节进度。 */
+  onDownload?: (received: number, total: number) => void,
+
+  /** 转码进度：value 取 0 ~ 1；outputSeconds 是已编码的输出时长。 */
+  onProgress?: (value: number, outputSeconds: number) => void,
+};
+
+let activeFfmpeg: FFmpegLike | null = null;
+let interrupt: ((error: Error) => void) | null = null;
+
+/** 加载或转码超过这么久没有任何事件（进度、字节），就视为卡死并自动中止。 */
+const TRANSCODE_IDLE_TIMEOUT_MS = 120000;
+
+/** 超过此时长的录像降到 854 宽转码（单线程 wasm 编码太长太慢）。 */
+const LONG_RECORDING_MS = 15 * 60 * 1000;
+
+/**
+ * 中止当前转码并终止内核 worker：正在等待的 webmToMp4 会立刻抛错，
+ * 调用方可以退回导出原始 WebM。转码太慢时给用户一个逃生门。
+ */
+export function abortTranscode(reason = '已取消转码。') {
+  const reject = interrupt;
+  interrupt = null;
+  try {
+    activeFfmpeg?.terminate();
+  } catch (_) { /* worker 可能已经不在了 */ }
+  activeFfmpeg = null;
+  ffmpegPromise = null;
+  reject?.(new Error(reason));
+}
+
+/**
+ * 把录到的 webm 转成 MP4。
+ * @param durationMs 录像时长，用来在 webm 缺少时长元数据（MediaRecorder 常见）时推算进度。
+ */
 export async function webmToMp4(
   blob: Blob,
-  progress?: (value: number) => void,
+  durationMs: number,
+  callbacks: TranscodeCallbacks = {},
 ): Promise<Uint8Array> {
-  const ffmpeg = await loadFFmpeg();
-  const input = 'input.webm';
-  const output = 'output.mp4';
-  await ffmpeg.writeFile(input, new Uint8Array(await blob.arrayBuffer()));
-  const onProgress = (data: { progress: number, time: number }) => {
-    progress?.(Math.max(0, Math.min(1, data.progress)));
+  let lastTick = Date.now();
+  const tick = () => {
+    lastTick = Date.now();
   };
-  ffmpeg.on('progress', onProgress);
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastTick > TRANSCODE_IDLE_TIMEOUT_MS) {
+      abortTranscode('转码长时间没有响应，已自动中止。');
+    }
+  }, 15000);
+  let rejectInterrupt: (error: Error) => void;
+  const interrupted = new Promise<never>((_, reject) => {
+    rejectInterrupt = reject;
+  });
+  interrupt = (error) => rejectInterrupt(error);
+  let ffmpeg: FFmpegLike | null = null;
+  let input: string | null = null;
+  let output: string | null = null;
+  const onProgress = (data: { progress: number, time: number }) => {
+    tick();
+    const expectedSeconds = durationMs / 1000;
+    const byTime = expectedSeconds > 0 ? data.time / 1e6 / expectedSeconds : 0;
+    const value = Math.min(1, Math.max(0, Math.max(data.progress || 0, byTime)));
+    callbacks.onProgress?.(value, Math.max(0, data.time / 1e6));
+  };
   try {
-    const code = await ffmpeg.exec(buildMp4Args(input, output));
+    ffmpeg = await Promise.race([
+      loadFFmpeg((received, total) => {
+        tick();
+        callbacks.onDownload?.(received, total);
+      }),
+      interrupted,
+    ]);
+    activeFfmpeg = ffmpeg;
+    input = 'input.webm';
+    output = 'output.mp4';
+    tick();
+    const raw = new Uint8Array(await blob.arrayBuffer());
+    await Promise.race([ffmpeg.writeFile(input, raw), interrupted]);
+    tick();
+    ffmpeg.on('progress', onProgress);
+    const maxDim = durationMs > LONG_RECORDING_MS ? 854 : 1280;
+    const code = await Promise.race([
+      ffmpeg.exec(buildMp4Args(input, output, maxDim)),
+      interrupted,
+    ]);
     if (code !== 0) {
       throw new Error(`ffmpeg 退出码 ${code}`);
     }
-    const data = await ffmpeg.readFile(output);
+    tick();
+    const data = await Promise.race([ffmpeg.readFile(output), interrupted]);
     if (typeof data === 'string') {
       throw new Error('ffmpeg 输出格式异常。');
     }
     return data;
   } finally {
-    ffmpeg.off('progress', onProgress);
-    await ffmpeg.deleteFile(input).catch(() => {});
-    await ffmpeg.deleteFile(output).catch(() => {});
+    interrupt = null;
+    clearInterval(watchdog);
+    ffmpeg?.off('progress', onProgress);
+    // abortTranscode 会清掉 activeFfmpeg；此时 worker 已死，清理文件的调用会永远悬挂，直接跳过。
+    if (activeFfmpeg === ffmpeg && ffmpeg) {
+      activeFfmpeg = null;
+      if (input) await ffmpeg.deleteFile(input).catch(() => {});
+      if (output) await ffmpeg.deleteFile(output).catch(() => {});
+    }
   }
 }
 

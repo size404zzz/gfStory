@@ -2,13 +2,13 @@
 import { VideocamFilled } from '@vicons/material';
 import { saveAs } from 'file-saver';
 import {
-  computed, onMounted, onUnmounted, ref,
+  computed, onMounted, onUnmounted, ref, watch,
 } from 'vue';
 
 import {
   DEFAULT_RECORDING_SETTINGS, MAX_FFMPEG_INPUT_BYTES, RECORDING_TAIL_MS,
-  describeCaptureError, formatBytes, formatDuration, recordingFilename,
-  requestTabCapture, startTabRecording, webmToMp4,
+  abortTranscode, describeCaptureError, formatBytes, formatDuration,
+  recordingFilename, requestTabCapture, startTabRecording, webmToMp4,
   type RecordingSettings, type StoryPlaybackController,
 } from '../../story/recorder';
 
@@ -35,12 +35,34 @@ const countdownLeft = ref(0);
 const elapsedMs = ref(0);
 const transcodeStage = ref<'ffmpeg' | 'transcode'>('ffmpeg');
 const transcodeProgress = ref(0);
+const outputSeconds = ref(0);
+const downloadReceived = ref(0);
+const downloadTotal = ref(0);
+const processingMs = ref(0);
 
 const sessionActive = computed(() => (
   phase.value === 'countdown'
   || phase.value === 'recording'
   || phase.value === 'processing'
 ));
+
+const downloadRatio = computed(() => (
+  downloadTotal.value > 0 ? Math.min(1, downloadReceived.value / downloadTotal.value) : 0
+));
+
+// 处理阶段用秒表让用户确认流程还活着。
+let processingTicker: ReturnType<typeof setInterval> | undefined;
+watch(phase, (value) => {
+  if (value === 'processing') {
+    processingMs.value = 0;
+    processingTicker = setInterval(() => {
+      processingMs.value += 1000;
+    }, 1000);
+  } else if (processingTicker) {
+    clearInterval(processingTicker);
+    processingTicker = undefined;
+  }
+});
 
 let stream: MediaStream | null = null;
 let recording: { mimeType: string, stop(): Promise<Blob> } | null = null;
@@ -136,14 +158,24 @@ async function finishRecording(reason: string) {
   phase.value = 'processing';
   transcodeStage.value = 'ffmpeg';
   transcodeProgress.value = 0;
+  outputSeconds.value = 0;
+  downloadReceived.value = 0;
+  downloadTotal.value = 0;
   const name = recordingFilename();
   try {
     if (blob.size > MAX_FFMPEG_INPUT_BYTES) {
       throw new Error('原始录像过大，超出内置转码能力');
     }
-    const mp4 = await webmToMp4(blob, (value) => {
-      transcodeStage.value = 'transcode';
-      transcodeProgress.value = value;
+    const mp4 = await webmToMp4(blob, elapsedMs.value, {
+      onDownload: (received, total) => {
+        downloadReceived.value = received;
+        downloadTotal.value = total;
+      },
+      onProgress: (value, seconds) => {
+        transcodeStage.value = 'transcode';
+        transcodeProgress.value = value;
+        outputSeconds.value = seconds;
+      },
     });
     saveAs(new Blob([mp4], { type: 'video/mp4' }), name);
     outcome.value = { file: name, size: mp4.byteLength, fallback: false };
@@ -153,9 +185,17 @@ async function finishRecording(reason: string) {
     const fallbackName = recordingFilename(new Date(), mimeType.includes('mp4') ? 'mp4' : 'webm');
     saveAs(blob, fallbackName);
     outcome.value = { file: fallbackName, size: blob.size, fallback: true };
-    failure.value = `MP4 转换失败：${describeCaptureError(error)}。已改为导出原始录像。`;
+    const message = describeCaptureError(error);
+    failure.value = message.includes('取消')
+      ? '已取消 MP4 转码，已直接导出原始 WebM 录像。'
+      : `MP4 转换失败：${message}。已改为导出原始录像。`;
     phase.value = 'finished';
   }
+}
+
+/** 「转码太慢」的逃生门：中止 ffmpeg 并直接导出 WebM。 */
+function cancelTranscode() {
+  abortTranscode();
 }
 
 function watchPlayback() {
@@ -338,8 +378,9 @@ onUnmounted(() => {
           </label>
         </div>
         <p class="recorder-note">
-          需要 Chrome / Edge 浏览器。首次导出会从 CDN 加载约 31MB 的 ffmpeg 内核，用于把录像转码成
-          MP4（H.264 + AAC）。
+          需要 Chrome / Edge 浏览器。首次导出会从 CDN 加载约 31MB 的 ffmpeg 内核（下载后缓存），
+          用于把录像转码成 MP4（H.264 + AAC，720p）。转码在浏览器本地单线程进行，十几分钟以上的
+          长录像会明显偏慢。
         </p>
         <p v-if="failure" class="recorder-error">{{ failure }}</p>
         <div class="recorder-actions">
@@ -361,15 +402,42 @@ onUnmounted(() => {
     <div v-else-if="phase === 'processing'" class="recorder-backdrop">
       <div class="recorder-card">
         <h3>{{ transcodeStage === 'ffmpeg' ? '正在加载 FFmpeg 内核…' : '正在转码为 MP4…' }}</h3>
-        <p class="recorder-note">
-          {{ transcodeStage === 'ffmpeg'
-            ? '首次加载约 31MB，视网络情况可能需要一点时间。'
-            : `录像时长 ${formatDuration(elapsedMs)}` }}
-        </p>
-        <div v-if="transcodeStage === 'transcode'" class="recorder-bar">
-          <div class="recorder-bar-fill"
-            :style="{ width: `${Math.round(transcodeProgress * 100)}%` }"></div>
-        </div>
+        <template v-if="transcodeStage === 'ffmpeg'">
+          <p class="recorder-note">
+            首次加载约 31MB，下载后会缓存，下次不用重新下载。
+          </p>
+          <template v-if="downloadTotal > 0">
+            <div class="recorder-bar">
+              <div class="recorder-bar-fill"
+                :style="{ width: `${Math.round(downloadRatio * 100)}%` }"></div>
+            </div>
+            <p class="recorder-note">
+              {{ formatBytes(downloadReceived) }} / {{ formatBytes(downloadTotal) }}
+              · 已用时 {{ formatDuration(processingMs) }}
+            </p>
+          </template>
+          <p v-else class="recorder-note">
+            已下载 {{ formatBytes(downloadReceived) }}
+            · 已用时 {{ formatDuration(processingMs) }}
+          </p>
+        </template>
+        <template v-else>
+          <div class="recorder-bar">
+            <div class="recorder-bar-fill"
+              :style="{ width: `${Math.round(transcodeProgress * 100)}%` }"></div>
+          </div>
+          <p class="recorder-note">
+            已转出 {{ Math.round(transcodeProgress * 100) }}%
+            （{{ formatDuration(outputSeconds * 1000) }} / {{ formatDuration(elapsedMs) }}）
+            · 已用时 {{ formatDuration(processingMs) }}
+          </p>
+          <p class="recorder-note">
+            转码在浏览器里单线程进行，长视频可能需要几分钟；嫌慢可以直接导出 WebM。
+          </p>
+          <div class="recorder-actions">
+            <button @click="cancelTranscode">取消并导出 WebM</button>
+          </div>
+        </template>
       </div>
     </div>
 

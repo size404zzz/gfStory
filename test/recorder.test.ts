@@ -43,10 +43,17 @@ describe('buildMp4Args', () => {
     expect(args.indexOf('-i')).toBeLessThan(args.indexOf('output.mp4'));
     expect(args.slice(args.indexOf('-c:v'), args.indexOf('-c:v') + 2)).toEqual(['-c:v', 'libx264']);
     expect(args.slice(args.indexOf('-c:a'), args.indexOf('-c:a') + 2)).toEqual(['-c:a', 'aac']);
-    // 画面宽高要取偶，x264 才能接受。
-    expect(args[args.indexOf('-vf') + 1]).toContain('trunc(iw/2)*2');
+    // 画面宽高要取偶，x264 才能接受；同时限制最大宽度，长视频单线程转码才不会太慢。
+    const filters = args[args.indexOf('-vf') + 1];
+    expect(filters).toContain('trunc(iw/2)*2');
+    expect(filters).toContain('scale=min(1280');
     // faststart 让视频上传后可以直接流式播放。
     expect(args).toContain('+faststart');
+  });
+
+  test('长录像可以进一步降低转码分辨率', () => {
+    const args = buildMp4Args('input.webm', 'output.mp4', 854);
+    expect(args[args.indexOf('-vf') + 1]).toContain('scale=min(854');
   });
 });
 
