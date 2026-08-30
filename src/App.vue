@@ -10,6 +10,8 @@ import { ref } from 'vue';
 import DialogueComposer from './components/editor/DialogueComposer.vue';
 import EditorStart from './components/editor/EditorStart.vue';
 import SceneSetup from './components/editor/SceneSetup.vue';
+import StoryTeller from './components/viewer/StoryTeller.vue';
+import { compileMarkdown, linesToMarkdown } from './story/compiler';
 import {
   defaultLine, initUniqueId, nextId, type GfStory, type Line, type SceneLine,
 } from './types/lines';
@@ -20,6 +22,27 @@ const step = ref<EditorStep>('start');
 const story = ref<GfStory | null>(null);
 const background = ref('');
 const music = ref('');
+
+// 「录制视频」：把当前编辑的剧情编译后放进全屏播放器，用录制器自动导出视频。
+const studioOpen = ref(false);
+const studioPreparing = ref(false);
+const studioChunk = ref('');
+
+async function openStudio() {
+  if (!story.value || studioPreparing.value) return;
+  studioPreparing.value = true;
+  try {
+    studioChunk.value = await compileMarkdown(await linesToMarkdown(story.value));
+    studioOpen.value = true;
+  } finally {
+    studioPreparing.value = false;
+  }
+}
+
+function closeStudio() {
+  studioOpen.value = false;
+  studioChunk.value = '';
+}
 
 function isScene(line: Line): line is SceneLine {
   return line.type === 'scene';
@@ -103,7 +126,14 @@ function returnToStart() {
         <div v-else-if="story" class="project-shell">
           <header class="project-header">
             <n-button text @click="returnToStart">返回开始页</n-button>
-            <n-button secondary type="primary" @click="saveJson">保存 JSON</n-button>
+            <div class="project-header-actions">
+              <n-button v-if="step === 'dialogue'" text type="warning"
+                :disabled="studioPreparing" :loading="studioPreparing" @click="openStudio"
+              >
+                录制视频
+              </n-button>
+              <n-button secondary type="primary" @click="saveJson">保存 JSON</n-button>
+            </div>
           </header>
           <scene-setup v-if="step === 'scene'" v-model:background="background" v-model:music="music"
             @back="returnToStart" @continue="finishSceneSetup"
@@ -112,6 +142,13 @@ function returnToStart() {
             @update:modelValue="updateStory"
             @scene-settings="step = 'scene'"
           />
+        </div>
+        <div v-if="studioOpen" class="studio-overlay">
+          <header class="studio-header">
+            <span>录制预览 · 剧情将自动播放并录制为视频</span>
+            <n-button text @click="closeStudio">退出预览</n-button>
+          </header>
+          <story-teller class="studio-stage" :chunk="studioChunk" auto-record />
         </div>
       </n-notification-provider>
     </n-dialog-provider>
@@ -137,5 +174,35 @@ body {
   padding: 0 24px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.11);
   background: #18181c;
+}
+
+.project-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.studio-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+}
+
+.studio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.studio-stage {
+  flex: 1;
+  min-height: 0;
 }
 </style>

@@ -38,6 +38,9 @@ const props = defineProps<{
 
   loading?: boolean,
 
+  /** 录制视频时隐藏所有界面按钮，只留剧情画面。 */
+  hideControls?: boolean,
+
   history?: HistoryLine[];
 }>();
 const textBox = ref<HTMLDivElement>();
@@ -120,7 +123,7 @@ watch(() => props.history, (history) => {
 
 <template>
   <div class="story-background" :class="classes">
-    <div class="button-slot" v-show="!history">
+    <div class="button-slot" v-show="!history && !hideControls">
       <slot></slot>
     </div>
     <div class="background-image">
