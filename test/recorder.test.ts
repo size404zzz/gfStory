@@ -4,7 +4,7 @@ import {
 
 import {
   buildMp4Args, describeCaptureError, formatBytes, formatDuration,
-  pickRecorderMimeType, recordingFilename, startTabRecording,
+  pickRecorderMimeType, recordingFilename, resolutionWidth, startTabRecording,
 } from '../src/story/recorder';
 
 afterEach(() => {
@@ -123,10 +123,10 @@ describe('startTabRecording', () => {
     FakeRecorder.created = [];
   });
 
-  test('码率固定在 1080p 短视频常用档位（8Mbps + 192kbps）', () => {
+  test('码率由设置传入并固定在 1080p 短视频常用档位（8Mbps + 192kbps）', () => {
     FakeRecorder.supported = (mime) => mime.startsWith('video/webm');
     vi.stubGlobal('MediaRecorder', FakeRecorder);
-    startTabRecording({} as MediaStream);
+    startTabRecording({} as MediaStream, 8000000);
     const [recorder] = FakeRecorder.created;
     expect(recorder.options.mimeType).toBe('video/webm;codecs=vp9,opus');
     expect(recorder.options.videoBitsPerSecond).toBe(8000000);
@@ -138,10 +138,18 @@ describe('startTabRecording', () => {
     FakeRecorder.supported = (mime) => mime.startsWith('video/mp4');
     vi.stubGlobal('MediaRecorder', FakeRecorder);
     expect(pickRecorderMimeType()).toBe('video/mp4;codecs=avc1.640028,mp4a.40.2');
-    startTabRecording({} as MediaStream);
+    startTabRecording({} as MediaStream, 8000000);
     const [recorder] = FakeRecorder.created;
     expect(recorder.options.mimeType).toBe('video/mp4;codecs=avc1.640028,mp4a.40.2');
     expect(recorder.startArgs).toBe('no-timeslice');
+  });
+});
+
+describe('resolutionWidth', () => {
+  test('按 16:9 换算各档分辨率宽度', () => {
+    expect(resolutionWidth(1080)).toBe(1920);
+    expect(resolutionWidth(720)).toBe(1280);
+    expect(resolutionWidth(480)).toBe(854);
   });
 });
 

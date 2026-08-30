@@ -6,9 +6,9 @@ import {
 } from 'vue';
 
 import {
-  DEFAULT_RECORDING_SETTINGS, MAX_FFMPEG_INPUT_BYTES, RECORDING_TAIL_MS,
-  abortTranscode, describeCaptureError, formatBytes, formatDuration,
-  recordingFilename, requestTabCapture, startTabRecording, webmToMp4,
+  DEFAULT_RECORDING_SETTINGS, LONG_RECORDING_MS, MAX_FFMPEG_INPUT_BYTES, RECORDING_TAIL_MS,
+  abortTranscode, describeCaptureError, formatBytes, formatDuration, recordingFilename,
+  requestTabCapture, resolutionWidth, startTabRecording, webmToMp4,
   type RecordingSettings, type StoryPlaybackController,
 } from '../../story/recorder';
 
@@ -126,6 +126,12 @@ function abortSession() {
   phase.value = 'idle';
 }
 
+/** 兜底转码的输出宽度：跟随所选分辨率；超长录像压到 854 加速。 */
+function transcodeMaxDim() {
+  const width = resolutionWidth(settings.value.resolutionHeight);
+  return elapsedMs.value > LONG_RECORDING_MS ? Math.min(width, 854) : width;
+}
+
 async function finishRecording(reason: string) {
   if (finished) {
     return;
@@ -184,7 +190,7 @@ async function finishRecording(reason: string) {
         transcodeProgress.value = value;
         outputSeconds.value = seconds;
       },
-    });
+    }, transcodeMaxDim());
     saveAs(new Blob([mp4], { type: 'video/mp4' }), name);
     outcome.value = { file: name, size: mp4.byteLength, fallback: false };
     phase.value = 'finished';
@@ -251,7 +257,7 @@ async function startRecording() {
     return;
   }
   try {
-    recording = startTabRecording(stream);
+    recording = startTabRecording(stream, settings.value.videoBitrate);
   } catch (error) {
     abortSession();
     phase.value = 'settings';
@@ -273,7 +279,11 @@ async function startRecording() {
 
 async function runSession() {
   try {
-    stream = await requestTabCapture(settings.value.captureAudio);
+    stream = await requestTabCapture(
+      settings.value.captureAudio,
+      settings.value.resolutionHeight,
+      settings.value.frameRate,
+    );
   } catch (error) {
     phase.value = 'settings';
     failure.value = describeCaptureError(error);
@@ -363,6 +373,28 @@ onUnmounted(() => {
           <li>录制期间请保持本标签页可见，按 <b>Esc</b> 可随时结束并导出视频。</li>
         </ol>
         <div class="recorder-options">
+          <label>
+            <span>分辨率</span>
+            <select v-model.number="settings.resolutionHeight" class="recorder-select">
+              <option :value="1080">1080p（1920×1080）</option>
+              <option :value="720">720p（1280×720）</option>
+              <option :value="480">480p（854×480）</option>
+            </select>
+          </label>
+          <label>
+            <span>帧率</span>
+            <select v-model.number="settings.frameRate" class="recorder-select">
+              <option :value="30">30 帧</option>
+              <option :value="24">24 帧</option>
+              <option :value="15">15 帧（体积最小）</option>
+            </select>
+          </label>
+          <label>
+            <span>码率</span>
+            <input v-model.number="settings.videoBitrate" type="range"
+              min="1000000" max="12000000" step="500000" />
+            <span class="recorder-value">{{ (settings.videoBitrate / 1e6).toFixed(1) }} Mbps</span>
+          </label>
           <label>
             <span>播放倍速</span>
             <input v-model.number="settings.speed" type="range" min="1" max="10" step="1" />
@@ -538,6 +570,16 @@ onUnmounted(() => {
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 3px;
   background: #0000;
+  color: inherit;
+}
+
+.recorder-select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: #111;
   color: inherit;
 }
 

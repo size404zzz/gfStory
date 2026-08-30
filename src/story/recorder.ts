@@ -33,6 +33,15 @@ export type RecordingSettings = {
 
   /** 是否采集标签页音频（背景音乐与音效）。 */
   captureAudio: boolean,
+
+  /** 采集分辨率（按 16:9 的高度算：1080 / 720 / 480）。 */
+  resolutionHeight: number,
+
+  /** 采集帧率。 */
+  frameRate: number,
+
+  /** 视频码率（bps）。 */
+  videoBitrate: number,
 };
 
 export const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
@@ -40,6 +49,9 @@ export const DEFAULT_RECORDING_SETTINGS: RecordingSettings = {
   countdownSeconds: 3,
   optionDelaySeconds: 2.5,
   captureAudio: true,
+  resolutionHeight: 1080,
+  frameRate: 30,
+  videoBitrate: 8000000,
 };
 
 /** 剧情播完后额外录制的收尾时长，给「故事结束」留一个结尾镜头。 */
@@ -81,7 +93,16 @@ export function pickRecorderMimeType(): string {
   return mime;
 }
 
-export async function requestTabCapture(audio: boolean): Promise<MediaStream> {
+/** 按用户选的分辨率高度换算 16:9 的宽度（480 → 854，720 → 1280，1080 → 1920），向上取整到偶数。 */
+export function resolutionWidth(height: number): number {
+  return Math.ceil((height * 16) / 9 / 2) * 2;
+}
+
+export async function requestTabCapture(
+  audio: boolean,
+  resolutionHeight: number,
+  frameRate: number,
+): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getDisplayMedia) {
     throw new Error('当前浏览器不支持画面采集，请使用 Chrome 或 Edge。');
   }
@@ -90,9 +111,9 @@ export async function requestTabCapture(audio: boolean): Promise<MediaStream> {
   // 互斥（Chromium 会抛 Self-contradictory configuration），所以不能加后者。
   const options = {
     video: {
-      frameRate: { ideal: 30 },
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
+      frameRate: { ideal: frameRate },
+      width: { ideal: resolutionWidth(resolutionHeight) },
+      height: { ideal: resolutionHeight },
     },
     audio: audio
       ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
@@ -118,12 +139,12 @@ export type TabRecording = {
 };
 
 /** 立即开始录制一个媒体流，返回用于停止并收集录像的句柄。 */
-export function startTabRecording(stream: MediaStream): TabRecording {
+export function startTabRecording(stream: MediaStream, videoBitrate: number): TabRecording {
   const mimeType = pickRecorderMimeType();
   const recorder = new MediaRecorder(stream, {
     mimeType,
-    // 固定在 1080p 短视频的常用档位（B站/YouTube 投稿推荐 8Mbps），保证音画上限。
-    videoBitsPerSecond: 8000000,
+    // 默认 8Mbps（B站/YouTube 投稿推荐档位），可在录制设置里机动调整。
+    videoBitsPerSecond: videoBitrate,
     audioBitsPerSecond: 192000,
   });
   const chunks: Blob[] = [];
@@ -351,10 +372,10 @@ let activeFfmpeg: FFmpegLike | null = null;
 let interrupt: ((error: Error) => void) | null = null;
 
 /** 加载或转码超过这么久没有任何事件（进度、字节），就视为卡死并自动中止。 */
-const TRANSCODE_IDLE_TIMEOUT_MS = 120000;
+export const TRANSCODE_IDLE_TIMEOUT_MS = 120000;
 
-/** 超过此时长的录像降到 854 宽转码（单线程 wasm 编码太长太慢）。 */
-const LONG_RECORDING_MS = 15 * 60 * 1000;
+/** 超过此时长的录像，兜底转码时把分辨率上限压到 854（单线程 wasm 编码太长太慢）。 */
+export const LONG_RECORDING_MS = 15 * 60 * 1000;
 
 /**
  * 中止当前转码并终止内核 worker：正在等待的 webmToMp4 会立刻抛错，
@@ -374,11 +395,13 @@ export function abortTranscode(reason = '已取消转码。') {
 /**
  * 把录到的 webm 转成 MP4。
  * @param durationMs 录像时长，用来在 webm 缺少时长元数据（MediaRecorder 常见）时推算进度。
+ * @param maxDim 转码输出宽度上限；不传时长超长时自动压到 854。
  */
 export async function webmToMp4(
   blob: Blob,
   durationMs: number,
   callbacks: TranscodeCallbacks = {},
+  maxDim?: number,
 ): Promise<Uint8Array> {
   let lastTick = Date.now();
   const tick = () => {
@@ -420,9 +443,9 @@ export async function webmToMp4(
     await Promise.race([ffmpeg.writeFile(input, raw), interrupted]);
     tick();
     ffmpeg.on('progress', onProgress);
-    const maxDim = durationMs > LONG_RECORDING_MS ? 854 : 1280;
+    const outputWidth = maxDim ?? (durationMs > LONG_RECORDING_MS ? 854 : 1280);
     const code = await Promise.race([
-      ffmpeg.exec(buildMp4Args(input, output, maxDim)),
+      ffmpeg.exec(buildMp4Args(input, output, outputWidth)),
       interrupted,
     ]);
     if (code !== 0) {
