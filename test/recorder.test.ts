@@ -147,6 +147,7 @@ describe('startTabRecording', () => {
 
 describe('resolutionWidth', () => {
   test('按 16:9 换算各档分辨率宽度', () => {
+    expect(resolutionWidth(2160)).toBe(3840);
     expect(resolutionWidth(1080)).toBe(1920);
     expect(resolutionWidth(720)).toBe(1280);
     expect(resolutionWidth(480)).toBe(854);

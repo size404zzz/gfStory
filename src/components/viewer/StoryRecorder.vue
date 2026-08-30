@@ -376,6 +376,7 @@ onUnmounted(() => {
           <label>
             <span>分辨率</span>
             <select v-model.number="settings.resolutionHeight" class="recorder-select">
+              <option :value="2160">4K（3840×2160）</option>
               <option :value="1080">1080p（1920×1080）</option>
               <option :value="720">720p（1280×720）</option>
               <option :value="480">480p（854×480）</option>
@@ -384,6 +385,7 @@ onUnmounted(() => {
           <label>
             <span>帧率</span>
             <select v-model.number="settings.frameRate" class="recorder-select">
+              <option :value="60">60 帧</option>
               <option :value="30">30 帧</option>
               <option :value="24">24 帧</option>
               <option :value="15">15 帧（体积最小）</option>
@@ -392,7 +394,7 @@ onUnmounted(() => {
           <label>
             <span>码率</span>
             <input v-model.number="settings.videoBitrate" type="range"
-              min="1000000" max="12000000" step="500000" />
+              min="1000000" max="80000000" step="500000" />
             <span class="recorder-value">{{ (settings.videoBitrate / 1e6).toFixed(1) }} Mbps</span>
           </label>
           <label>
