@@ -117,9 +117,9 @@ export function startTabRecording(stream: MediaStream): TabRecording {
   const mimeType = pickRecorderMimeType();
   const recorder = new MediaRecorder(stream, {
     mimeType,
-    // 剧情画面大多静止，5Mbps 足够清晰；码率越低，转码时占用的内存与解码时间越少。
-    videoBitsPerSecond: 5000000,
-    audioBitsPerSecond: 128000,
+    // 固定在 1080p 短视频的常用档位（B站/YouTube 投稿推荐 8Mbps），保证音画上限。
+    videoBitsPerSecond: 8000000,
+    audioBitsPerSecond: 192000,
   });
   const chunks: Blob[] = [];
   recorder.ondataavailable = (event) => {

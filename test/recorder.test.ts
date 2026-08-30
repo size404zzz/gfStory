@@ -4,7 +4,7 @@ import {
 
 import {
   buildMp4Args, describeCaptureError, formatBytes, formatDuration,
-  pickRecorderMimeType, recordingFilename,
+  pickRecorderMimeType, recordingFilename, startTabRecording,
 } from '../src/story/recorder';
 
 afterEach(() => {
@@ -80,6 +80,41 @@ describe('pickRecorderMimeType', () => {
   test('不支持 MediaRecorder 时报错', () => {
     vi.stubGlobal('MediaRecorder', undefined);
     expect(() => pickRecorderMimeType()).toThrow('MediaRecorder');
+  });
+});
+
+describe('startTabRecording', () => {
+  test('码率固定在 1080p 短视频常用档位（8Mbps + 192kbps）', () => {
+    const optionsList: MediaRecorderOptions[] = [];
+    class FakeRecorder {
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+
+      onstop: (() => void) | null = null;
+
+      onerror: (() => void) | null = null;
+
+      state = 'inactive';
+
+      constructor(_stream: MediaStream, options: MediaRecorderOptions) {
+        optionsList.push(options);
+      }
+
+      // eslint-disable-next-line class-methods-use-this
+      start() { /* noop */ }
+
+      // eslint-disable-next-line class-methods-use-this
+      stop() { /* noop */ }
+
+      static isTypeSupported(mime: string) {
+        return mime.startsWith('video/webm');
+      }
+    }
+    vi.stubGlobal('MediaRecorder', FakeRecorder);
+    startTabRecording({} as MediaStream);
+    expect(optionsList).toHaveLength(1);
+    expect(optionsList[0].mimeType).toBe('video/webm;codecs=vp9,opus');
+    expect(optionsList[0].videoBitsPerSecond).toBe(8000000);
+    expect(optionsList[0].audioBitsPerSecond).toBe(192000);
   });
 });
 
